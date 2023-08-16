@@ -1,0 +1,15 @@
+BACKBONE:
+    MINK:
+        INPUT_DIM: 4 # coords + intensity
+        CHANNELS: [32, 32, 64, 128, 256, 256, 128, 96, 96]
+        RESOLUTION: 0.05
+        KNN_UP: 3
+        PRETRAINED: ckpt/fusion_pls_kitti_backbone.ckpt
+    CPE:
+        INPUT_DIM: 3 # rgb
+        CHANNELS: [ 32, 32, 64, 128, 256, 256, 128, 96, 96 ]
+        RESOLUTION: 0.05
+        KNN_UP: 3
+        PRETRAINED:
+
+    PRETRAINED:

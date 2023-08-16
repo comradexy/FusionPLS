@@ -1,4 +1,4 @@
-# Mask-Based Panoptic LiDAR Segmentation for Autonomous Driving
+# Panoptic LiDAR Segmentation Based on LiDAR-Camera Fusion
 
 This repository contains the implementation of our [paper](https://www.ipb.uni-bonn.de/wp-content/papercite-data/pdf/marcuzzi2023ral.pdf).
 

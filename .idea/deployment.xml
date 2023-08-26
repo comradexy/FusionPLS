@@ -3,24 +3,17 @@
   <component name="PublishConfigData" autoUpload="Always" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
     <option name="confirmBeforeUploading" value="false" />
     <serverData>
-      <paths name="405-Server@10.12.45.214:22">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/data/dxy/Code/FusionPLS" local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
       <paths name="dxy@10.12.41.198:22 password">
         <serverdata>
           <mappings>
-            <mapping deploy="/data/dxy/Code/FusionPLS" local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/data/dxy/Code/FusionPLS" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>
       <paths name="escapist@10.12.45.214:22 password">
         <serverdata>
           <mappings>
-            <mapping deploy="/data/dxy/Code/FusionPLS" local="$PROJECT_DIR$" />
+            <mapping deploy="/data/dxy/Code/FusionPLS" local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>

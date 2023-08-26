@@ -13,6 +13,7 @@ from fusion_pls.utils.interpolate import knn_up
 from fusion_pls.models.mink import MinkEncoderDecoder
 from fusion_pls.models.color_encoder import ColorPointEncoder
 from fusion_pls.models.backbone import FusionEncoder
+from fusion_pls.models.mask_model import MaskPS
 from fusion_pls.datasets.semantic_dataset import SemanticDatasetModule
 
 
@@ -115,19 +116,24 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(device)
     model_cfg = edict(
-        yaml.safe_load(open(join(getDir(__file__), "config/model.yaml")))
+        yaml.safe_load(open(join(getDir(__file__), "./config/model.yaml")))
     )
     backbone_cfg = edict(
-        yaml.safe_load(open(join(getDir(__file__), "config/backbone.yaml")))
+        yaml.safe_load(open(join(getDir(__file__), "./config/backbone.yaml")))
     )
-    cfg = edict({**model_cfg, **backbone_cfg})
+    decoder_cfg = edict(
+        yaml.safe_load(open(join(getDir(__file__), "./config/decoder.yaml")))
+    )
+    cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
 
     # backbone = FusionEncoder(cfg.BACKBONE, cfg[cfg.MODEL.DATASET])
     # backbone = backbone.to(device)
 
-    cpe = ColorPointEncoder(cfg.BACKBONE.CPE, cfg[cfg.MODEL.DATASET])
-    cpe = cpe.to(device)
+    # cpe = ColorPointEncoder(cfg.BACKBONE.CPE, cfg[cfg.MODEL.DATASET])
+    # cpe = cpe.to(device)
 
+    model = MaskPS(cfg)
+    model.to(device)
     data = SemanticDatasetModule(cfg)
     data.setup()
     # 获取test DataLoader
@@ -139,7 +145,8 @@ if __name__ == '__main__':
     #     pass
 
     sample = next(test_iter)
-    print(sample.keys())
+    # print(sample.keys())
+
     # xyz = sample['pt_coord']
     # feats = sample['feats']
     # rgb = sample['rgb']
@@ -155,14 +162,22 @@ if __name__ == '__main__':
     # color_feats = color_encoder(rgb, intensity, xyz)
     # print(f'color_feats: type--{type(color_feats)}; shape--{color_feats.shape}')
 
-    feats, coors = cpe(sample)
+    # feats, coors = cpe(sample)
+    # for i in range(len(feats)):
+    #     print(f'level{i}:')
+    #     for j in range(len(feats[i])):
+    #         print(f'  feats_batch{j}: shape--{feats[i][j].shape}')
+    # for i in range(len(coors)):
+    #     print(f'level{i}:')
+    #     for j in range(len(coors[i])):
+    #         print(f'  coors_batch{j}: shape--{coors[i][j].shape}')
 
-    for i in range(len(feats)):
-        print(f'level{i}:')
-        for j in range(len(feats[i])):
-            print(f'  feats_batch{j}: shape--{feats[i][j].shape}')
-    for i in range(len(coors)):
-        print(f'level{i}:')
-        for j in range(len(coors[i])):
-            print(f'  coors_batch{j}: shape--{coors[i][j].shape}')
-
+    outputs, padding, bb_logits = model(sample)
+    print(outputs['pred_logits'].shape)
+    print(outputs['pred_masks'].shape)
+    for i in range(len(outputs['aux_outputs'])):
+        print(f'aux_outputs{i}:')
+        for k, v in outputs['aux_outputs'][i].items():
+            print(f'  {k}: shape--{v.shape}')
+    print(f"padding.shape: {padding.shape}")
+    print(f"bb_logits.shape: {bb_logits.shape}")

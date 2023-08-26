@@ -2,7 +2,7 @@
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$" />
-    <orderEntry type="jdk" jdkName="mink(Remote Python 3.7.16 escapist@10.12.45.214:22)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="maskpls(Remote Python 3.7.16 dxy@10.12.41.198:22)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
   <component name="PyDocumentationSettings">

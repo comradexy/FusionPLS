@@ -47,8 +47,8 @@ class MaskedTransformerDecoder(nn.Module):
         self.level_embed = nn.Embedding(self.num_feature_levels, hidden_dim)
 
         self.mask_feat_proj = nn.Sequential()
-        # in_channels = bb_cfg.CHANNELS
-        in_channels = [x + y for x, y in zip(bb_cfg.MINK.CHANNELS, bb_cfg.CPE.CHANNELS)]
+        # in_channels = [x + y for x, y in zip(bb_cfg.MINK.CHANNELS, bb_cfg.CPE.CHANNELS)]
+        in_channels = bb_cfg.CPE.CHANNELS
         if in_channels[-1] != hidden_dim:
             self.mask_feat_proj = nn.Linear(in_channels[-1], hidden_dim)
 

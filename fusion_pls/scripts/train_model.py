@@ -50,8 +50,8 @@ def main(w, ckpt, nuscenes, data_path):
 
     # for param in model.backbone.parameters():
     #     param.requires_grad = False
-    for param in model.backbone.mink.parameters():
-        param.requires_grad = False
+    # for param in model.backbone.mink.parameters():
+    #     param.requires_grad = False
 
     tb_logger = pl_loggers.TensorBoardLogger(
         "experiments/" + cfg.EXPERIMENT.ID, default_hp_metric=False

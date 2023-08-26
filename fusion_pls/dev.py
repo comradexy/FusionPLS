@@ -100,15 +100,23 @@ def TensorField(x, res):
     input batch
     The coordinates are quantized using the provided resolution
     """
+    # fuse feats and rgb
+    feats = torch.from_numpy(np.concatenate(x["feats"], 0)).float()
+    rgb = torch.from_numpy(np.concatenate(x["rgb"], 0)).float()
+    features = torch.cat([feats, rgb], dim=1)
+    # features = torch.from_numpy(np.concatenate(x["feats"], 0)).float()
+    coordinates = ME.utils.batched_coordinates(
+        [i / res for i in x["pt_coord"]], dtype=torch.float32
+    )
+
     feat_tfield = ME.TensorField(
-        features=torch.from_numpy(np.concatenate(x["rgb"], 0)).float(),
-        coordinates=ME.utils.batched_coordinates(
-            [i / res for i in x["pt_coord"]], dtype=torch.float32
-        ),
+        features=features,
+        coordinates=coordinates,
         quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE,
         minkowski_algorithm=ME.MinkowskiAlgorithm.SPEED_OPTIMIZED,
         device="cuda",
     )
+
     return feat_tfield
 
 
@@ -145,7 +153,6 @@ if __name__ == '__main__':
     #     pass
 
     sample = next(test_iter)
-    # print(sample.keys())
 
     # xyz = sample['pt_coord']
     # feats = sample['feats']
@@ -172,12 +179,15 @@ if __name__ == '__main__':
     #     for j in range(len(coors[i])):
     #         print(f'  coors_batch{j}: shape--{coors[i][j].shape}')
 
-    outputs, padding, bb_logits = model(sample)
-    print(outputs['pred_logits'].shape)
-    print(outputs['pred_masks'].shape)
-    for i in range(len(outputs['aux_outputs'])):
-        print(f'aux_outputs{i}:')
-        for k, v in outputs['aux_outputs'][i].items():
-            print(f'  {k}: shape--{v.shape}')
-    print(f"padding.shape: {padding.shape}")
-    print(f"bb_logits.shape: {bb_logits.shape}")
+    # outputs, padding, bb_logits = model(sample)
+    # print(outputs['pred_logits'].shape)
+    # print(outputs['pred_masks'].shape)
+    # for i in range(len(outputs['aux_outputs'])):
+    #     print(f'aux_outputs{i}:')
+    #     for k, v in outputs['aux_outputs'][i].items():
+    #         print(f'  {k}: shape--{v.shape}')
+    # print(f"padding.shape: {padding.shape}")
+    # print(f"bb_logits.shape: {bb_logits.shape}")
+
+    in_tf = TensorField(sample, cfg.BACKBONE.MINK.RESOLUTION)
+    print(f"in_tf size: {in_tf._F.size()}")

@@ -13,9 +13,10 @@ class FusionEncoder(nn.Module):
 
     def __init__(self, cfg: object, data_cfg: object) -> object:
         super().__init__()
-        self.mink = MinkEncoderDecoder(cfg.MINK, data_cfg)
+        # self.mink = MinkEncoderDecoder(cfg.MINK, data_cfg)
         self.cpe = ColorPointEncoder(cfg.CPE, data_cfg)
-        sem_head_in_dim = cfg.MINK.CHANNELS[-1] + cfg.CPE.CHANNELS[-1]
+        # sem_head_in_dim = cfg.MINK.CHANNELS[-1] + cfg.CPE.CHANNELS[-1]
+        sem_head_in_dim = cfg.CPE.CHANNELS[-1]
         self.sem_head = nn.Linear(sem_head_in_dim, 20)
 
         if cfg.MINK.PRETRAINED is None and cfg.CPE.PRETRAINED is None:
@@ -37,16 +38,17 @@ class FusionEncoder(nn.Module):
             self.load_state_dict(model_dict)
 
     def forward(self, x):
-        geo_feats, geo_coors = self.mink(x)
-        color_feats, color_coors = self.cpe(x)
-        feats = [
-            [
-                torch.cat([g, c], dim=1)
-                for g, c in zip(gl, cl)
-            ]
-            for gl, cl in zip(geo_feats, color_feats)
-        ]
-        coors = geo_coors
+        # geo_feats, geo_coors = self.mink(x)
+        # color_feats, color_coors = self.cpe(x)
+        # feats = [
+        #     [
+        #         torch.cat([g, c], dim=1)
+        #         for g, c in zip(gl, cl)
+        #     ]
+        #     for gl, cl in zip(geo_feats, color_feats)
+        # ]
+        # coors = geo_coors
+        feats, coors = self.cpe(x)
         feats, coors, pad_masks = self.pad_batch(coors, feats)
         logits = self.sem_head(feats[-1])
         return feats, coors, pad_masks, logits

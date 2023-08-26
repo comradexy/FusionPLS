@@ -164,15 +164,23 @@ class ColorPointEncoder(nn.Module):
         input batch
         The coordinates are quantized using the provided resolution
         """
+        # fuse feats(xyzi) and rgb
+        feats = torch.from_numpy(np.concatenate(x["feats"], 0)).float()
+        rgb = torch.from_numpy(np.concatenate(x["rgb"], 0)).float()
+        features = torch.cat([feats, rgb], dim=1)
+        # get batched coordinates
+        coordinates = ME.utils.batched_coordinates(
+            [i / self.res for i in x["pt_coord"]], dtype=torch.float32
+        )
+        # create tensor field
         feat_tfield = ME.TensorField(
-            features=torch.from_numpy(np.concatenate(x["rgb"], 0)).float(),
-            coordinates=ME.utils.batched_coordinates(
-                [i / self.res for i in x["pt_coord"]], dtype=torch.float32
-            ),
+            features=features,
+            coordinates=coordinates,
             quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE,
             minkowski_algorithm=ME.MinkowskiAlgorithm.SPEED_OPTIMIZED,
             device="cuda",
         )
+
         return feat_tfield
 
     def pad_batch(self, coors, feats):
@@ -272,95 +280,3 @@ class ResidualBlock(nn.Module):
     def forward(self, x):
         out = self.relu(self.net(x) + self.downsample(x))
         return out
-
-
-class PointNet(nn.Module):
-    def __init__(self, in_channel=9, out_channels=32):
-        super(PointNet, self).__init__()
-        self.conv1 = torch.nn.Conv1d(in_channel, out_channels, 1)
-        self.conv2 = torch.nn.Conv1d(out_channels, out_channels, 1)
-        self.bn1 = nn.BatchNorm1d(out_channels)
-        self.bn2 = nn.BatchNorm1d(out_channels)
-        self.out_channels = out_channels
-
-    def forward(self, x):
-        x = x.transpose(1, 2)
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = self.bn2(self.conv2(x))
-        x = x.transpose(1, 2)
-
-        return x
-
-
-# class ColorPointEncoder(nn.Module):
-#     def __init__(self, out_channels=32):
-#         super(ColorPointEncoder, self).__init__()
-#         self.rgbi_encoder = PointNet(4, 16)
-#         self.xyz_encoder = PointNet(3, 16)
-#         self.fusion = PointNet(32, out_channels)
-#
-#     def forward(self, x):
-#         xyz = torch.from_numpy(x["pt_coord"]).float()
-#         feats = torch.from_numpy(x["feats"]).float()
-#         rgb = torch.from_numpy(x["rgb"]).float()
-#         intensity = feats[:, :, -1]
-#         rgbi = torch.cat([rgb, intensity], dim=2)
-#         rgbi = self.rgbi_encoder(rgbi)
-#         xyz = self.xyz_encoder(xyz)
-#         out = torch.cat([xyz, rgbi], dim=2)
-#         out = self.fusion(out)
-#         return out
-
-class CPConvs(nn.Module):
-    def __init__(self):
-        super(CPConvs, self).__init__()
-        self.pointnet1_fea = PointNet(6, 12)
-        self.pointnet1_wgt = PointNet(6, 12)
-        self.pointnet1_fus = PointNet(108, 12)
-
-        self.pointnet2_fea = PointNet(12, 24)
-        self.pointnet2_wgt = PointNet(6, 24)
-        self.pointnet2_fus = PointNet(216, 24)
-
-        self.pointnet3_fea = PointNet(24, 48)
-        self.pointnet3_wgt = PointNet(6, 48)
-        self.pointnet3_fus = PointNet(432, 48)
-
-    def forward(self, points_features, points_neighbor):
-        if points_features.shape[0] == 0:
-            return points_features
-
-        N, F = points_features.shape
-        N, M = points_neighbor.shape
-        point_empty = (points_neighbor == 0).nonzero()
-        points_neighbor[point_empty[:, 0], point_empty[:, 1]] = point_empty[:, 0]
-
-        pointnet_in_xiyiziuiviri = torch.index_select(points_features[:, [0, 1, 2, 6, 7, 8]], 0,
-                                                      points_neighbor.view(-1)).view(N, M, -1)
-        pointnet_in_x0y0z0u0v0r0 = points_features[:, [0, 1, 2, 6, 7, 8]].unsqueeze(dim=1).repeat([1, M, 1])
-        pointnet_in_xyzuvr = pointnet_in_xiyiziuiviri - pointnet_in_x0y0z0u0v0r0
-        points_features[:, 3:6] /= 255.0
-
-        pointnet1_in_fea = points_features[:, :6].view(N, 1, -1)
-        pointnet1_out_fea = self.pointnet1_fea(pointnet1_in_fea).view(N, -1)
-        pointnet1_out_fea = torch.index_select(pointnet1_out_fea, 0, points_neighbor.view(-1)).view(N, M, -1)
-        pointnet1_out_wgt = self.pointnet1_wgt(pointnet_in_xyzuvr)
-        pointnet1_feas = pointnet1_out_fea * pointnet1_out_wgt
-        pointnet1_feas = self.pointnet1_fus(pointnet1_feas.reshape(N, 1, -1)).view(N, -1)
-
-        pointnet2_in_fea = pointnet1_feas.view(N, 1, -1)
-        pointnet2_out_fea = self.pointnet2_fea(pointnet2_in_fea).view(N, -1)
-        pointnet2_out_fea = torch.index_select(pointnet2_out_fea, 0, points_neighbor.view(-1)).view(N, M, -1)
-        pointnet2_out_wgt = self.pointnet2_wgt(pointnet_in_xyzuvr)
-        pointnet2_feas = pointnet2_out_fea * pointnet2_out_wgt
-        pointnet2_feas = self.pointnet2_fus(pointnet2_feas.reshape(N, 1, -1)).view(N, -1)
-
-        pointnet3_in_fea = pointnet2_feas.view(N, 1, -1)
-        pointnet3_out_fea = self.pointnet3_fea(pointnet3_in_fea).view(N, -1)
-        pointnet3_out_fea = torch.index_select(pointnet3_out_fea, 0, points_neighbor.view(-1)).view(N, M, -1)
-        pointnet3_out_wgt = self.pointnet3_wgt(pointnet_in_xyzuvr)
-        pointnet3_feas = pointnet3_out_fea * pointnet3_out_wgt
-        pointnet3_feas = self.pointnet3_fus(pointnet3_feas.reshape(N, 1, -1)).view(N, -1)
-
-        pointnet_feas = torch.cat([pointnet3_feas, pointnet2_feas, pointnet1_feas, points_features[:, :6]], dim=-1)
-        return pointnet_feas

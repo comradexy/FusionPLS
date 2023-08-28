@@ -14,11 +14,12 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 
 
 @click.command()
-@click.option("--w", type=str, default=None, required=False)
-@click.option("--ckpt", type=str, default=None, required=False)
+@click.option("--name", "-n", type=str, default="default", required=False)
+@click.option("--version", "-v", type=str, default=None, required=False)
+@click.option("--ckpt", "-c", type=str, default=None, required=False)
+@click.option("--data_path", "-d", type=str, default=None)
 @click.option("--nuscenes", is_flag=False)
-@click.option("--data_path", type=str, default=None)
-def main(w, ckpt, nuscenes, data_path):
+def main(name, version, ckpt, data_path, nuscenes):
     model_cfg = edict(
         yaml.safe_load(open(join(getDir(__file__), "../config/model.yaml")))
     )
@@ -29,11 +30,7 @@ def main(w, ckpt, nuscenes, data_path):
         yaml.safe_load(open(join(getDir(__file__), "../config/decoder.yaml")))
     )
     cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
-    # cfg.git_commit_version = str(
-    #     subprocess.check_output(["git", "rev-parse", "--short", "HEAD"]).strip()
-    # )
-    # if nuscenes:
-    #     cfg.MODEL.DATASET = "NUSCENES"
+
     if nuscenes:
         cfg.MODEL.DATASET = "NUSCENES"
         if data_path:
@@ -44,9 +41,6 @@ def main(w, ckpt, nuscenes, data_path):
 
     data = SemanticDatasetModule(cfg)
     model = MaskPS(cfg)
-    if w:
-        w = torch.load(w, map_location="cpu")
-        model.load_state_dict(w["state_dict"])
 
     # for param in model.backbone.parameters():
     #     param.requires_grad = False
@@ -54,7 +48,10 @@ def main(w, ckpt, nuscenes, data_path):
     #     param.requires_grad = False
 
     tb_logger = pl_loggers.TensorBoardLogger(
-        "experiments/" + cfg.EXPERIMENT.ID, default_hp_metric=False
+        save_dir="experiments/" + cfg.EXPERIMENT.ID,
+        name=name,
+        version=version,
+        default_hp_metric=False,
     )
 
     # Callbacks

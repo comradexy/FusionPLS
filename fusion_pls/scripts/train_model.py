@@ -10,7 +10,7 @@ from fusion_pls.datasets.semantic_dataset import SemanticDatasetModule
 from fusion_pls.models.mask_model import MaskPS
 from pytorch_lightning import Trainer
 from pytorch_lightning import loggers as pl_loggers
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.callbacks import Callback, LearningRateMonitor, ModelCheckpoint
 
 
 @click.command()
@@ -70,13 +70,14 @@ def main(name, version, ckpt, data_path, nuscenes):
         mode="max",
         save_last=True,
     )
+    print_metrics = PrintMetricsCallback()
 
     trainer = Trainer(
         gpus=cfg.TRAIN.N_GPUS,
         accelerator="ddp",
         logger=tb_logger,
         max_epochs=cfg.TRAIN.MAX_EPOCH,
-        callbacks=[lr_monitor, pq_ckpt, iou_ckpt],
+        callbacks=[lr_monitor, pq_ckpt, iou_ckpt, print_metrics],
         log_every_n_steps=1,
         gradient_clip_val=0.5,
         accumulate_grad_batches=cfg.TRAIN.BATCH_ACC,
@@ -84,6 +85,17 @@ def main(name, version, ckpt, data_path, nuscenes):
     )
 
     trainer.fit(model, data)
+
+
+class PrintMetricsCallback(Callback):
+    def on_train_epoch_end(self, trainer, pl_module):
+        # get current metrics
+        metrics = trainer.callback_metrics
+        # print metrics/pq, metrics/rq and metrics/iou
+        print(f"Epoch {trainer.current_epoch} metrics:")
+        print(f"  pq: {metrics['metrics/pq']:.4f}")
+        print(f"  rq: {metrics['metrics/rq']:.4f}")
+        print(f"  iou: {metrics['metrics/iou']:.4f}")
 
 
 def getDir(obj):

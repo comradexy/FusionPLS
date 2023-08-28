@@ -92,11 +92,11 @@ class PrintMetricsCallback(Callback):
         # get current metrics
         metrics = trainer.callback_metrics
         # print metrics/pq, metrics/rq and metrics/iou
-        print(f"Epoch {trainer.current_epoch} metrics:")
-        print(f"  pq: {metrics['metrics/pq']:.4f}")
-        print(f"  rq: {metrics['metrics/rq']:.4f}")
-        print(f"  iou: {metrics['metrics/iou']:.4f}")
-
+        print(f"Metrics: {{"
+              f"pq: {metrics['metrics/pq']:.4f}; "
+              f"rq: {metrics['metrics/rq']:.4f}; "
+              f"iou: {metrics['metrics/iou']:.4f}"
+              f"}}")
 
 def getDir(obj):
     return os.path.dirname(os.path.abspath(obj))

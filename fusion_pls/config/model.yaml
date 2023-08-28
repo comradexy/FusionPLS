@@ -9,7 +9,7 @@ TRAIN:
     BATCH_SIZE: 4
     BATCH_ACC: 8
     NUM_WORKERS: 16
-    N_GPUS: 1
+    N_GPUS: -1
 
     AUG: True
     SUBSAMPLE: True

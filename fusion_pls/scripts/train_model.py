@@ -70,14 +70,13 @@ def main(name, version, ckpt, data_path, nuscenes):
         mode="max",
         save_last=True,
     )
-    print_metrics = PrintMetricsCallback()
 
     trainer = Trainer(
         gpus=cfg.TRAIN.N_GPUS,
         accelerator="ddp",
         logger=tb_logger,
         max_epochs=cfg.TRAIN.MAX_EPOCH,
-        callbacks=[lr_monitor, pq_ckpt, iou_ckpt, print_metrics],
+        callbacks=[lr_monitor, pq_ckpt, iou_ckpt],
         log_every_n_steps=1,
         gradient_clip_val=0.5,
         accumulate_grad_batches=cfg.TRAIN.BATCH_ACC,

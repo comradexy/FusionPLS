@@ -33,6 +33,8 @@ def main(w, save_testset, nuscenes, data_path):
 
     cfg.EVALUATE = True
     cfg.BACKBONE.PRETRAINED = None
+    cfg.BACKBONE.MINK.PRETRAINED = None
+    cfg.BACKBONE.CPE.PRETRAINED = None
     if save_testset:
         results_dir = create_dirs(nuscenes)
         print(f"Saving test set predictions in directory {results_dir}")
@@ -52,7 +54,7 @@ def main(w, save_testset, nuscenes, data_path):
     model.load_state_dict(w["state_dict"])
 
     trainer = Trainer(
-        gpus=cfg.TEST.N_GPUS,
+        gpus=cfg.TRAIN.N_GPUS,
         accelerator="ddp",
         logger=False)
 

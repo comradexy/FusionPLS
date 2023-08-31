@@ -14,9 +14,6 @@ TRAIN:
     AUG: True
     SUBSAMPLE: True
 
-TEST:
-    N_GPUS: 1
-
 MODEL:
     IMAGE: True
     DATASET: KITTI

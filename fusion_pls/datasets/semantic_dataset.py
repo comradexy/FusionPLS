@@ -202,9 +202,8 @@ class SemanticDataset(Dataset):
             sem_labels = np.vectorize(self.learning_map.__getitem__)(sem_labels)
         image = Image.open(self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png")
         image = np.array(image)
-        rgb = pcd_painting(xyz, image, calib["Tr"], calib["P2"])
 
-        return (xyz, sem_labels, ins_labels, intensity, fname, rgb, calib, pose, token)
+        return (xyz, intensity, image, sem_labels, ins_labels, fname, calib, pose, token)
 
 
 class MaskSemanticDataset(Dataset):
@@ -236,7 +235,7 @@ class MaskSemanticDataset(Dataset):
         empty = True
         while empty == True:
             data = self.dataset[index]
-            xyz, sem_labels, ins_labels, intensity, fname, rgb, calib, pose, token = data
+            xyz, intensity, image, sem_labels, ins_labels, fname, calib, pose, token = data
             keep = np.argwhere(
                 (self.xlim[0] < xyz[:, 0])
                 & (xyz[:, 0] < self.xlim[1])
@@ -246,10 +245,9 @@ class MaskSemanticDataset(Dataset):
                 & (xyz[:, 2] < self.zlim[1])
             )[:, 0]
             xyz = xyz[keep]
+            intensity = intensity[keep]
             sem_labels = sem_labels[keep]
             ins_labels = ins_labels[keep]
-            intensity = intensity[keep]
-            rgb = rgb[keep]
 
             # skip scans without instances in train set
             if self.split != "train":
@@ -268,13 +266,13 @@ class MaskSemanticDataset(Dataset):
             return (
                 xyz,
                 feats,
+                image,
                 sem_labels,
                 ins_labels,
                 torch.tensor([]),
                 torch.tensor([]),
                 [],
                 fname,
-                rgb,
                 calib,
                 pose,
                 token,
@@ -284,11 +282,9 @@ class MaskSemanticDataset(Dataset):
         if self.split == "train" and self.subsample and len(xyz) > self.sub_pts:
             idx = np.random.choice(np.arange(len(xyz)), self.sub_pts, replace=False)
             xyz = xyz[idx]
+            feats = feats[idx]
             sem_labels = sem_labels[idx]
             ins_labels = ins_labels[idx]
-            feats = feats[idx]
-            intensity = intensity[idx]
-            rgb = rgb[idx]
 
         stuff_masks = np.array([]).reshape(0, xyz.shape[0])
         stuff_masks_ids = []
@@ -354,13 +350,13 @@ class MaskSemanticDataset(Dataset):
         return (
             xyz,
             feats,
+            image,
             sem_labels,
             ins_labels,
             masks,
             masks_cls,
             masks_ids,
             fname,
-            rgb,
             calib,
             pose,
             token,
@@ -372,13 +368,13 @@ class BatchCollation:
         self.keys = [
             "pt_coord",
             "feats",
+            "image",
             "sem_label",
             "ins_label",
             "masks",
             "masks_cls",
             "masks_ids",
             "fname",
-            "rgb",
             "calib",
             "pose",
             "token",
@@ -443,63 +439,6 @@ def pcd_augmentations(feats):
     feats[:, :3] = xyz
 
     return feats
-
-
-def pcd_painting(pts, img, Trv2c, P2):
-    """Paint points with image.
-
-    Note:
-        This function is for KITTI only.
-
-    Args:
-        pts (np.ndarray, shape=[N, 3]): Coordinates of points.
-        img (np.ndarray, shape=[H, W, 3]): Image.
-        Trv2c (np.ndarray, shape=[4, 4]): Matrix to project points in
-            camera coordinate to lidar coordinate.
-        P2 (p.array, shape=[4, 4]): Intrinsics of Camera2.
-
-    Returns:
-        colors: np.ndarray, shape=[N, 3]: RGB colors of points.
-    """
-    # Convert points from lidar coordinate to camera coordinate
-    pts_cam = lidar_to_camera(pts, Trv2c, P2)
-    # Convert points from camera coordinate to image coordinate
-    pts_img = pts_cam[:, :2] / pts_cam[:, 2:]
-    # Convert image coordinate to pixel coordinates
-    pts_img = pts_img.astype(np.int32)
-    # Get RGB colors from image
-    image = Image.fromarray(img)
-    colors = []
-    for pt in pts_img:
-        x, y = pt
-        x = min(max(x, 0), img.shape[1] - 1)
-        y = min(max(y, 0), img.shape[0] - 1)
-        rgb = image.getpixel((x, y))
-        colors.append(rgb)
-    colors = np.array(colors)
-    return colors
-
-
-def lidar_to_camera(points, velo2cam, P2):
-    """Convert points in lidar coordinate to camera coordinate.
-
-    Args:
-        points (np.ndarray, shape=[N, 3]): Points in lidar coordinate.
-        velo2cam (np.ndarray, shape=[4, 4]): Matrix to project points in
-            lidar coordinate to camera coordinate.
-        P2 (np.ndarray, shape=[4, 4]): Intrinsics of Camera2.
-
-    Returns:
-        np.ndarray, shape=[N, 3]: Points in camera coordinate.
-    """
-    points_shape = list(points.shape[0:-1])
-    if velo2cam.shape != (4, 4):
-        velo2cam = np.concatenate(
-            [velo2cam, np.array([[0, 0, 0, 1.]], dtype=np.float32)], axis=0)
-    if points.shape[-1] == 3:
-        points = np.concatenate([points, np.ones(points_shape + [1])], axis=-1)
-    cam_points = points @ velo2cam.T @ P2.T
-    return cam_points[..., :3]
 
 
 def parse_calibration(filename):

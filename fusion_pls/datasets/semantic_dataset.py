@@ -345,8 +345,11 @@ class MaskSemanticDataset(Dataset):
                 masks.shape[0] == masks_cls.shape[0]
         ), f"not same number masks and classes: masks {masks.shape[0]}, classes {masks_cls.shape[0]} "
 
+        # Augmentations
+        # xyz contains original points coordinates
+        # feats contains augmented coordinates and other textural features
         if self.split == "train" and self.aug:
-            xyz = pcd_augmentations(xyz)
+            feats = pcd_augmentations(feats)
 
         return (
             xyz,
@@ -395,7 +398,15 @@ def absoluteDirPath(directory):
     return os.path.abspath(directory)
 
 
-def pcd_augmentations(xyz):
+def pcd_augmentations(feats):
+    """
+    Note:
+        Augment point cloud data with random rotation, flip and translation
+    Args:
+        feats: np.array, shape=[N, C], xyz coordinates and other features
+    """
+    # get xyz coordinates
+    xyz = feats[:, :3]
     # rotation
     rotate_rad = np.deg2rad(np.random.random() * 360)
     c, s = np.cos(rotate_rad), np.sin(rotate_rad)
@@ -428,7 +439,10 @@ def pcd_augmentations(xyz):
     ).T
     xyz[:, 0:3] += noise_translate
 
-    return xyz
+    # replace feats with augmented xyz
+    feats[:, :3] = xyz
+
+    return feats
 
 
 def pcd_painting(pts, img, Trv2c, P2):

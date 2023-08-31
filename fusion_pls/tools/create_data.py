@@ -11,6 +11,43 @@ from tqdm import tqdm
 from multiprocessing.pool import ThreadPool
 
 
+def pcd_painting(pts, img, Trv2c, P2):
+    """Paint points with image.
+
+    Note:
+        This function is for KITTI only.
+
+    Args:
+        pts (np.ndarray, shape=[N, 3]): Coordinates of points.
+        img (np.ndarray, shape=[H, W, 3]): Image.
+        Trv2c (np.ndarray, shape=[4, 4]): Matrix to project points in
+            camera coordinate to lidar coordinate.
+        P2 (p.array, shape=[4, 4]): Intrinsics of Camera2.
+
+    Returns:
+        colors: np.ndarray, shape=[N, 3]: RGB(normalized) of points.
+    """
+    # Convert points from lidar coordinate to camera coordinate
+    pts_cam = lidar_to_camera(pts, Trv2c, P2)
+    # Convert points from camera coordinate to image coordinate
+    pts_img = pts_cam[:, :2] / pts_cam[:, 2:]
+    # Convert image coordinate to pixel coordinates
+    pts_img = pts_img.astype(np.int32)
+    # Get RGB colors from image
+    image = Image.fromarray(img)
+    colors = []
+    for pt in pts_img:
+        x, y = pt
+        x = min(max(x, 0), img.shape[1] - 1)
+        y = min(max(y, 0), img.shape[0] - 1)
+        rgb = image.getpixel((x, y))
+        colors.append(rgb)
+    colors = np.array(colors)
+    # Normalize RGB
+    colors = colors / 255.0
+    return colors
+
+
 def remove_outside_points(points, Trv2c, P2, image_shape, rect=None):
     """Remove points which are outside of image.
 
@@ -46,6 +83,28 @@ def remove_outside_points(points, Trv2c, P2, image_shape, rect=None):
     indices = points_in_convex_polygon_3d_jit(points[:, :3], frustum_surfaces)
     points = points[indices.reshape([-1])]
     return points, indices.squeeze()
+
+
+def lidar_to_camera(points, velo2cam, P2):
+    """Convert points in lidar coordinate to camera coordinate.
+
+    Args:
+        points (np.ndarray, shape=[N, 3]): Points in lidar coordinate.
+        velo2cam (np.ndarray, shape=[4, 4]): Matrix to project points in
+            lidar coordinate to camera coordinate.
+        P2 (np.ndarray, shape=[4, 4]): Intrinsics of Camera2.
+
+    Returns:
+        np.ndarray, shape=[N, 3]: Points in camera coordinate.
+    """
+    points_shape = list(points.shape[0:-1])
+    if velo2cam.shape != (4, 4):
+        velo2cam = np.concatenate(
+            [velo2cam, np.array([[0, 0, 0, 1.]], dtype=np.float32)], axis=0)
+    if points.shape[-1] == 3:
+        points = np.concatenate([points, np.ones(points_shape + [1])], axis=-1)
+    cam_points = points @ velo2cam.T @ P2.T
+    return cam_points[..., :3]
 
 
 def camera_to_lidar(points, velo2cam, r_rect=None):
@@ -264,15 +323,21 @@ def process_sequence(seq, src_path, dst_path, pbar):
 
     seq_src_path = os.path.join(src_path, seq)
     seq_dst_path = os.path.join(dst_path, seq)
+
     seq_velo_src_path = os.path.join(seq_src_path, 'velodyne')
     seq_image_src_path = os.path.join(seq_src_path, 'image_2')
-    seq_velo_dst_path = os.path.join(seq_dst_path, 'velodyne')
-    seq_image_dst_path = os.path.join(seq_dst_path, 'image_2')
     seq_labels_src_path = os.path.join(seq_src_path, 'labels')
-    seq_labels_dst_path = os.path.join(seq_dst_path, 'labels')
 
-    os.makedirs(seq_velo_dst_path, exist_ok=True)
+    seq_vfs_dst_path = os.path.join(seq_dst_path, 'velodyne_fov_single')
+    seq_vfm_dst_path = os.path.join(seq_dst_path, 'velodyne_fov_multi')
+    seq_ind_dst_path = os.path.join(seq_dst_path, 'indices_fov')
+    seq_image_dst_path = os.path.join(seq_dst_path, 'image_2')
+    seq_labels_dst_path = os.path.join(seq_dst_path, 'labels_fov')
+
+    os.makedirs(seq_vfs_dst_path, exist_ok=True)
+    os.makedirs(seq_vfm_dst_path, exist_ok=True)
     os.makedirs(seq_image_dst_path, exist_ok=True)
+    os.makedirs(seq_ind_dst_path, exist_ok=True)
     os.makedirs(seq_labels_dst_path, exist_ok=True)
 
     # for frame in tqdm(os.listdir(seq_velo_src_path), desc='Processing seq ' + seq):
@@ -280,42 +345,65 @@ def process_sequence(seq, src_path, dst_path, pbar):
         num = frame.split('.')[0]
 
         # load points and image
-        points = np.memmap(os.path.join(seq_velo_src_path, frame), dtype=np.float32, mode='r').reshape(-1, 4)
+        points = np.memmap(os.path.join(seq_velo_src_path, frame),
+                           dtype=np.float32,
+                           mode='r').reshape(-1, 4)
         # image = Image.open(os.path.join(seq_image_src_path, num + '.png'))
         # image_size = image.size[::-1]
         image_size = imagesize.get(os.path.join(seq_image_src_path, num + '.png'))[::-1]
         reduced_points, indices = remove_outside_points(points, Tr, P2, list(image_size))
 
-        # save cropped frame to file
-        # np.savetxt(os.path.join(seq_velo_dst_path, num + '.bin'), reduced_points, delimiter=' ', fmt='%f')
-        np.memmap(os.path.join(seq_velo_dst_path, num + '.bin'),
+        # save indices to file, dtype=np.bool_
+        np.memmap(os.path.join(seq_ind_dst_path, num + '.bin'),
+                  dtype=np.bool_,
+                  mode='w+',
+                  shape=indices.shape)[:] = indices[:]
+
+        # save cropped single-modal frame to file
+        np.memmap(os.path.join(seq_vfs_dst_path, num + '.bin'),
                   dtype=np.float32,
                   mode='w+',
                   shape=reduced_points.shape)[:] = reduced_points[:]
-        # image.save(os.path.join(seq_image_dst_path, num + '.png'))
-        shutil.copy(os.path.join(seq_image_src_path, num + '.png'), os.path.join(seq_image_dst_path, num + '.png'))
 
-        # copy calib.txt to dst
-        calib_src = os.path.join(seq_src_path, 'calib.txt')
-        calib_dst = os.path.join(seq_dst_path, 'calib.txt')
-        if not os.path.exists(calib_dst):
-            with open(calib_dst, 'w') as f:
-                f.write('')
-        os.chmod(calib_dst, 0o755)
-        shutil.copy(calib_src, calib_dst)
+        # save cropped multi-modal frame to file
+        image = Image.open(os.path.join(seq_image_src_path, num + '.png'))
+        image = np.array(image)
+        color_pts = pcd_painting(reduced_points[:, :3], image, Tr, P2)
+        fused_pts = np.concatenate([reduced_points, color_pts], axis=1)
+        np.memmap(os.path.join(seq_vfm_dst_path, num + '.bin'),
+                  dtype=np.float32,
+                  mode='w+',
+                  shape=fused_pts.shape)[:] = fused_pts[:]
 
-        # copy poses.txt to dst
-        poses_src = os.path.join(seq_src_path, 'poses.txt')
-        poses_dst = os.path.join(seq_dst_path, 'poses.txt')
-        if not os.path.exists(poses_dst):
-            with open(poses_dst, 'w') as f:
-                f.write('')
-        os.chmod(poses_dst, 0o755)
-        shutil.copy(poses_src, poses_dst)
+        # if dst and src are the same, this step is unnecessary
+        if not os.path.samefile(seq_image_src_path, seq_image_dst_path):
+            # copy image to dst
+            shutil.copy(os.path.join(seq_image_src_path, num + '.png'),
+                        os.path.join(seq_image_dst_path, num + '.png'))
+
+            # copy calib.txt to dst
+            calib_src = os.path.join(seq_src_path, 'calib.txt')
+            calib_dst = os.path.join(seq_dst_path, 'calib.txt')
+            if not os.path.exists(calib_dst):
+                with open(calib_dst, 'w') as f:
+                    f.write('')
+            os.chmod(calib_dst, 0o755)
+            shutil.copy(calib_src, calib_dst)
+
+            # copy poses.txt to dst
+            poses_src = os.path.join(seq_src_path, 'poses.txt')
+            poses_dst = os.path.join(seq_dst_path, 'poses.txt')
+            if not os.path.exists(poses_dst):
+                with open(poses_dst, 'w') as f:
+                    f.write('')
+            os.chmod(poses_dst, 0o755)
+            shutil.copy(poses_src, poses_dst)
 
         # if seq < 11, save label
         if int(seq) < 11:
-            label = np.memmap(os.path.join(seq_labels_src_path, num + '.label'), dtype=np.int32, mode='r').reshape(-1)
+            label = np.memmap(os.path.join(seq_labels_src_path, num + '.label'),
+                              dtype=np.int32,
+                              mode='r').reshape(-1)
             reduced_label = label[indices]
             # np.savetxt(os.path.join(seq_labels_dst_path, num + '.label'), reduced_label, delimiter=' ', fmt='%d')
             np.memmap(os.path.join(seq_labels_dst_path, num + '.label'),
@@ -327,12 +415,12 @@ def process_sequence(seq, src_path, dst_path, pbar):
 
 
 def create_cropped_point_cloud(src, dst):
-    """Create cropped SemanticKitti dataset.
+    """Create SemanticKitti_Fov dataset.
     Args:
         src (str): Path to the raw dataset.
         dst (str): Path to save the cropped dataset.
     """
-    # print('Creating cropped SemanticKitti dataset...')
+    # print('Creating SemanticKitti_Fov dataset...')
     start_time = time.time()
     src_path = os.path.join(src, 'sequences')
     dst_path = os.path.join(dst, 'sequences')
@@ -341,7 +429,7 @@ def create_cropped_point_cloud(src, dst):
     total = 0
     for seq in sequences:
         total += len(os.listdir(os.path.join(src_path, seq, 'velodyne')))
-    pbar = tqdm(total=total, desc='Creating cropped SemanticKitti dataset')
+    pbar = tqdm(total=total, desc='Creating SemanticKitti_Fov dataset')
 
     for seq in sequences:
         process_sequence(seq, src_path, dst_path, pbar)
@@ -351,16 +439,16 @@ def create_cropped_point_cloud(src, dst):
     during_time = end_time - start_time
     hh_mm_ss = str(datetime.timedelta(seconds=int(during_time)))
     print('Time cost: {}'.format(hh_mm_ss))
-    print('SemanticKitti_cropped dataset created.')
+    print('SemanticKitti_Fov dataset created.')
 
 
 def _create_cropped_point_cloud(src, dst):
-    """Create cropped SemanticKitti dataset with multi-threading.
+    """Create SemanticKitti_Fov dataset with multi-threading.
     Args:
         src (str): Path to the raw dataset.
         dst (str): Path to save the cropped dataset.
     """
-    # print('Creating cropped SemanticKitti dataset...')
+    # print('Creating SemanticKitti_Fov dataset...')
     start_time = time.time()
     src_path = os.path.join(src, 'sequences')
     dst_path = os.path.join(dst, 'sequences')
@@ -370,7 +458,7 @@ def _create_cropped_point_cloud(src, dst):
     total = 0
     for seq in sequences:
         total += len(os.listdir(os.path.join(src_path, seq, 'velodyne')))
-    pbar = tqdm(total=total, desc='Creating cropped SemanticKitti dataset')
+    pbar = tqdm(total=total, desc='Creating SemanticKitti_Fov dataset')
 
     # Create a thread pool
     pool = ThreadPool()
@@ -394,16 +482,14 @@ def _create_cropped_point_cloud(src, dst):
     during_time = end_time - start_time
     hh_mm_ss = str(datetime.timedelta(seconds=int(during_time)))
     print('Time cost: {}'.format(hh_mm_ss))
-    print('SemanticKitti_cropped dataset created.')
+    print('SemanticKitti_Fov dataset created.')
 
 
 parser = argparse.ArgumentParser(description='Data converter arg parser')
 parser.add_argument('--src', type=str, default='./data/kitti/', help='source path')
-parser.add_argument('--dst', type=str, default='./data/kitti_cropped/', help='destination path')
+parser.add_argument('--dst', type=str, default='./data/kitti_fov/', help='destination path')
 
 if __name__ == '__main__':
-    # src = 'E:/Files/Data/semkitti_tiny/dataset/'
-    # dst = 'E:/Files/Data/semkitti_cropped/dataset/'
     args = parser.parse_args()
     src = args.src
     dst = args.dst

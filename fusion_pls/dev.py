@@ -121,8 +121,8 @@ def TensorField(x, res):
 
 
 if __name__ == '__main__':
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(device)
+    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # print(device)
     model_cfg = edict(
         yaml.safe_load(open(join(getDir(__file__), "./config/model.yaml")))
     )
@@ -140,8 +140,9 @@ if __name__ == '__main__':
     # cpe = ColorPointEncoder(cfg.BACKBONE.CPE, cfg[cfg.MODEL.DATASET])
     # cpe = cpe.to(device)
 
-    model = MaskPS(cfg)
-    model.to(device)
+    # model = MaskPS(cfg)
+    # model.to(device)
+    cfg.KITTI.PATH = '/data/dxy/SemanticKITTI_Fov/dataset'
     data = SemanticDatasetModule(cfg)
     data.setup()
     # 获取test DataLoader
@@ -189,5 +190,6 @@ if __name__ == '__main__':
     # print(f"padding.shape: {padding.shape}")
     # print(f"bb_logits.shape: {bb_logits.shape}")
 
-    in_tf = TensorField(sample, cfg.BACKBONE.MINK.RESOLUTION)
-    print(f"in_tf size: {in_tf._F.size()}")
+    print(sample.keys())
+    print(sample['pt_coord'][0].shape)
+    print(sample['feats'][0].shape)

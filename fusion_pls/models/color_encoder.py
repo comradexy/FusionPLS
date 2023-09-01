@@ -164,10 +164,8 @@ class ColorPointEncoder(nn.Module):
         input batch
         The coordinates are quantized using the provided resolution
         """
-        # fuse feats(xyzi) and rgb
-        feats = torch.from_numpy(np.concatenate(x["feats"], 0)).float()
-        rgb = torch.from_numpy(np.concatenate(x["rgb"], 0)).float()
-        features = torch.cat([feats, rgb], dim=1)
+        # get batched features(xyzIrgb)
+        features = torch.from_numpy(np.concatenate(x["feats"], 0)).float()
         # get batched coordinates
         coordinates = ME.utils.batched_coordinates(
             [i / self.res for i in x["pt_coord"]], dtype=torch.float32
@@ -180,7 +178,6 @@ class ColorPointEncoder(nn.Module):
             minkowski_algorithm=ME.MinkowskiAlgorithm.SPEED_OPTIMIZED,
             device="cuda",
         )
-
         return feat_tfield
 
     def pad_batch(self, coors, feats):

@@ -139,7 +139,7 @@ class SemanticDataset(Dataset):
         fill = 2 if dataset == "KITTI" else 4
         for i_folder in split:
             self.im_idx += absoluteFilePaths(
-                "/".join([data_path, str(i_folder).zfill(fill), "velodyne"])
+                "/".join([data_path, str(i_folder).zfill(fill), "velodyne_fov_multi"])
             )
             pose_files.append(
                 absoluteDirPath(
@@ -173,13 +173,18 @@ class SemanticDataset(Dataset):
         fname = self.im_idx[index]
         pose = self.poses[index]
         calib = self.calibs[index]
+        # points = np.fromfile(
+        #     self.im_idx[index],
+        #     dtype=np.float32
+        # ).reshape((-1, 7))
         points = np.memmap(
             self.im_idx[index],
             dtype=np.float32,
             mode="r",
-        ).reshape((-1, 4))
+        ).reshape((-1, 7))
         xyz = points[:, :3]
         intensity = points[:, 3]
+        rgb = points[:, 4:7]
         if len(intensity.shape) == 2:
             intensity = np.squeeze(intensity)
         token = "0"
@@ -192,18 +197,22 @@ class SemanticDataset(Dataset):
             sem_labels = annotated_data
             ins_labels = annotated_data
         else:
+            # annotated_data = np.fromfile(
+            #     self.im_idx[index].replace("velodyne_fov_multi", "labels_fov")[:-3] + "label",
+            #     dtype=np.int32,
+            # ).reshape((-1, 1))
             annotated_data = np.memmap(
-                self.im_idx[index].replace("velodyne", "labels")[:-3] + "label",
+                self.im_idx[index].replace("velodyne_fov_multi", "labels_fov")[:-3] + "label",
                 dtype=np.int32,
                 mode="r",
             ).reshape((-1, 1))
             sem_labels = annotated_data & 0xFFFF
             ins_labels = annotated_data >> 16
             sem_labels = np.vectorize(self.learning_map.__getitem__)(sem_labels)
-        image = Image.open(self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png")
+        image = Image.open(self.im_idx[index].replace("velodyne_fov_multi", "image_2")[:-3] + "png")
         image = np.array(image)
 
-        return (xyz, intensity, image, sem_labels, ins_labels, fname, calib, pose, token)
+        return (xyz, intensity, rgb, image, sem_labels, ins_labels, fname, calib, pose, token)
 
 
 class MaskSemanticDataset(Dataset):
@@ -235,7 +244,7 @@ class MaskSemanticDataset(Dataset):
         empty = True
         while empty == True:
             data = self.dataset[index]
-            xyz, intensity, image, sem_labels, ins_labels, fname, calib, pose, token = data
+            xyz, intensity, rgb, image, sem_labels, ins_labels, fname, calib, pose, token = data
             keep = np.argwhere(
                 (self.xlim[0] < xyz[:, 0])
                 & (xyz[:, 0] < self.xlim[1])
@@ -246,6 +255,7 @@ class MaskSemanticDataset(Dataset):
             )[:, 0]
             xyz = xyz[keep]
             intensity = intensity[keep]
+            rgb = rgb[keep]
             sem_labels = sem_labels[keep]
             ins_labels = ins_labels[keep]
 
@@ -260,7 +270,12 @@ class MaskSemanticDataset(Dataset):
             else:
                 empty = False
 
-        feats = np.concatenate((xyz, np.expand_dims(intensity, axis=1)), axis=1)
+        feats = np.concatenate(
+            (xyz.reshape(-1, 3),
+             intensity.reshape(-1, 1),
+             rgb.reshape(-1, 3)),
+            axis=1
+        )
 
         if self.split == "test":
             return (

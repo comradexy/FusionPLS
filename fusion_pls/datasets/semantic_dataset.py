@@ -139,7 +139,7 @@ class SemanticDataset(Dataset):
         fill = 2 if dataset == "KITTI" else 4
         for i_folder in split:
             self.im_idx += absoluteFilePaths(
-                "/".join([data_path, str(i_folder).zfill(fill), "velodyne_fov_multi"])
+                "/".join([data_path, str(i_folder).zfill(fill), "velodyne"])
             )
             pose_files.append(
                 absoluteDirPath(
@@ -173,12 +173,8 @@ class SemanticDataset(Dataset):
         fname = self.im_idx[index]
         pose = self.poses[index]
         calib = self.calibs[index]
-        # points = np.fromfile(
-        #     self.im_idx[index],
-        #     dtype=np.float32
-        # ).reshape((-1, 7))
         points = np.memmap(
-            self.im_idx[index],
+            self.im_idx[index].replace("velodyne", "velodyne_fov")[:-3] + "bin",
             dtype=np.float32,
             mode="r",
         ).reshape((-1, 7))
@@ -197,19 +193,15 @@ class SemanticDataset(Dataset):
             sem_labels = annotated_data
             ins_labels = annotated_data
         else:
-            # annotated_data = np.fromfile(
-            #     self.im_idx[index].replace("velodyne_fov_multi", "labels_fov")[:-3] + "label",
-            #     dtype=np.int32,
-            # ).reshape((-1, 1))
             annotated_data = np.memmap(
-                self.im_idx[index].replace("velodyne_fov_multi", "labels_fov")[:-3] + "label",
+                self.im_idx[index].replace("velodyne", "labels_fov")[:-3] + "label",
                 dtype=np.int32,
                 mode="r",
             ).reshape((-1, 1))
             sem_labels = annotated_data & 0xFFFF
             ins_labels = annotated_data >> 16
             sem_labels = np.vectorize(self.learning_map.__getitem__)(sem_labels)
-        image = Image.open(self.im_idx[index].replace("velodyne_fov_multi", "image_2")[:-3] + "png")
+        image = Image.open(self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png")
         image = np.array(image)
 
         return (xyz, intensity, rgb, image, sem_labels, ins_labels, fname, calib, pose, token)

@@ -142,7 +142,7 @@ if __name__ == '__main__':
 
     # model = MaskPS(cfg)
     # model.to(device)
-    cfg.KITTI.PATH = '/data/dxy/SemanticKITTI_Fov/dataset'
+    cfg.KITTI.PATH = '/data/dxy/SemanticKittiF/dataset'
     data = SemanticDatasetModule(cfg)
     data.setup()
     # 获取test DataLoader
@@ -193,3 +193,6 @@ if __name__ == '__main__':
     print(sample.keys())
     print(sample['pt_coord'][0].shape)
     print(sample['feats'][0].shape)
+
+
+

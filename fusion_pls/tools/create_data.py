@@ -43,8 +43,8 @@ def pcd_painting(pts, img, Trv2c, P2):
         rgb = image.getpixel((x, y))
         colors.append(rgb)
     colors = np.array(colors)
-    # Normalize RGB
-    colors = colors / 255.0
+    # # Normalize RGB
+    # colors = colors / 255.0
     return colors
 
 
@@ -328,12 +328,14 @@ def process_sequence(seq, src_path, dst_path, pbar):
     seq_image_src_path = os.path.join(seq_src_path, 'image_2')
     seq_labels_src_path = os.path.join(seq_src_path, 'labels')
 
+    seq_velo_dst_path = os.path.join(seq_dst_path, 'velodyne')
     seq_vfs_dst_path = os.path.join(seq_dst_path, 'velodyne_fov_single')
     seq_vfm_dst_path = os.path.join(seq_dst_path, 'velodyne_fov_multi')
     seq_ind_dst_path = os.path.join(seq_dst_path, 'indices_fov')
     seq_image_dst_path = os.path.join(seq_dst_path, 'image_2')
     seq_labels_dst_path = os.path.join(seq_dst_path, 'labels_fov')
 
+    os.makedirs(seq_velo_dst_path, exist_ok=True)
     os.makedirs(seq_vfs_dst_path, exist_ok=True)
     os.makedirs(seq_vfm_dst_path, exist_ok=True)
     os.makedirs(seq_image_dst_path, exist_ok=True)
@@ -377,6 +379,12 @@ def process_sequence(seq, src_path, dst_path, pbar):
 
         # if dst and src are the same, this step is unnecessary
         if not os.path.samefile(seq_image_src_path, seq_image_dst_path):
+            # copy points to dst
+            np.memmap(os.path.join(seq_velo_dst_path, num + '.bin'),
+                      dtype=np.float32,
+                      mode='w+',
+                      shape=points.shape)[:] = points[:]
+
             # copy image to dst
             shutil.copy(os.path.join(seq_image_src_path, num + '.png'),
                         os.path.join(seq_image_dst_path, num + '.png'))
@@ -415,12 +423,12 @@ def process_sequence(seq, src_path, dst_path, pbar):
 
 
 def create_cropped_point_cloud(src, dst):
-    """Create SemanticKitti_Fov dataset.
+    """Create SemanticKittiF dataset.
     Args:
         src (str): Path to the raw dataset.
         dst (str): Path to save the cropped dataset.
     """
-    # print('Creating SemanticKitti_Fov dataset...')
+    # print('Creating SemanticKittiF dataset...')
     start_time = time.time()
     src_path = os.path.join(src, 'sequences')
     dst_path = os.path.join(dst, 'sequences')
@@ -429,7 +437,7 @@ def create_cropped_point_cloud(src, dst):
     total = 0
     for seq in sequences:
         total += len(os.listdir(os.path.join(src_path, seq, 'velodyne')))
-    pbar = tqdm(total=total, desc='Creating SemanticKitti_Fov dataset')
+    pbar = tqdm(total=total, desc='Creating SemanticKittiF dataset')
 
     for seq in sequences:
         process_sequence(seq, src_path, dst_path, pbar)
@@ -439,16 +447,16 @@ def create_cropped_point_cloud(src, dst):
     during_time = end_time - start_time
     hh_mm_ss = str(datetime.timedelta(seconds=int(during_time)))
     print('Time cost: {}'.format(hh_mm_ss))
-    print('SemanticKitti_Fov dataset created.')
+    print('SemanticKittiF dataset created.')
 
 
 def _create_cropped_point_cloud(src, dst):
-    """Create SemanticKitti_Fov dataset with multi-threading.
+    """Create SemanticKittiF dataset with multi-threading.
     Args:
         src (str): Path to the raw dataset.
         dst (str): Path to save the cropped dataset.
     """
-    # print('Creating SemanticKitti_Fov dataset...')
+    # print('Creating SemanticKittiF dataset...')
     start_time = time.time()
     src_path = os.path.join(src, 'sequences')
     dst_path = os.path.join(dst, 'sequences')
@@ -458,7 +466,7 @@ def _create_cropped_point_cloud(src, dst):
     total = 0
     for seq in sequences:
         total += len(os.listdir(os.path.join(src_path, seq, 'velodyne')))
-    pbar = tqdm(total=total, desc='Creating SemanticKitti_Fov dataset')
+    pbar = tqdm(total=total, desc='Creating SemanticKittiF dataset')
 
     # Create a thread pool
     pool = ThreadPool()
@@ -482,12 +490,12 @@ def _create_cropped_point_cloud(src, dst):
     during_time = end_time - start_time
     hh_mm_ss = str(datetime.timedelta(seconds=int(during_time)))
     print('Time cost: {}'.format(hh_mm_ss))
-    print('SemanticKitti_Fov dataset created.')
+    print('SemanticKittiF dataset created.')
 
 
 parser = argparse.ArgumentParser(description='Data converter arg parser')
 parser.add_argument('--src', type=str, default='./data/kitti/', help='source path')
-parser.add_argument('--dst', type=str, default='./data/kitti_fov/', help='destination path')
+parser.add_argument('--dst', type=str, default='./data/kitti_f/', help='destination path')
 
 if __name__ == '__main__':
     args = parser.parse_args()

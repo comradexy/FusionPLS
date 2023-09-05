@@ -6,6 +6,7 @@ from fusion_pls.models.decoder import MaskedTransformerDecoder
 from fusion_pls.models.loss import MaskLoss, SemLoss
 from fusion_pls.models.mink import MinkEncoderDecoder
 from fusion_pls.models.backbone import FusionEncoder
+from fusion_pls.datasets.semantic_dataset import get_things_ids
 from fusion_pls.utils.evaluate_panoptic import PanopticEvaluator
 from pytorch_lightning.core.lightning import LightningModule
 
@@ -99,7 +100,8 @@ class MaskPS(LightningModule):
         if "RESULTS_DIR" in self.cfg:
             results_dir = self.cfg.RESULTS_DIR
             class_inv_lut = self.evaluator.get_class_inv_lut()
-            dt = self.cfg[self.cfg.MODEL.DATASET]
+            # dt = self.cfg[self.cfg.MODEL.DATASET]
+            dt = self.cfg.MODEL.DATASET
             testing.save_results(
                 sem_pred, ins_pred, results_dir, x, class_inv_lut, x["token"], dt
             )
@@ -140,7 +142,8 @@ class MaskPS(LightningModule):
     def panoptic_inference(self, outputs, padding):
         mask_cls = outputs["pred_logits"]
         mask_pred = outputs["pred_masks"]
-        things_ids = self.trainer.datamodule.things_ids
+        # things_ids = self.trainer.datamodule.things_ids
+        things_ids = get_things_ids(self.cfg.MODEL.DATASET)
         num_classes = self.cfg[self.cfg.MODEL.DATASET].NUM_CLASSES
         sem_pred = []
         ins_pred = []

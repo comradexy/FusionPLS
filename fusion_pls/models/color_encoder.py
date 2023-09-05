@@ -164,11 +164,13 @@ class ColorPointEncoder(nn.Module):
         input batch
         The coordinates are quantized using the provided resolution
         """
+        feats = x["feats"]
+        coords = [f[:, :3] for f in feats]
         # get batched features(xyzIrgb)
-        features = torch.from_numpy(np.concatenate(x["feats"], 0)).float()
+        features = torch.from_numpy(np.concatenate(feats, 0)).float()
         # get batched coordinates
         coordinates = ME.utils.batched_coordinates(
-            [i / self.res for i in x["pt_coord"]], dtype=torch.float32
+            [i / self.res for i in coords], dtype=torch.float32
         )
         # create tensor field
         feat_tfield = ME.TensorField(

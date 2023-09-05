@@ -16,6 +16,9 @@ class SemanticDatasetModule(LightningDataModule):
         self.color_map = []
         self.label_names = []
         self.dataset = cfg.MODEL.DATASET
+        self.train_mask_set = None
+        self.val_mask_set = None
+        self.test_mask_set = None
 
     def prepare_data(self):
         pass
@@ -174,7 +177,7 @@ class SemanticDataset(Dataset):
         pose = self.poses[index]
         calib = self.calibs[index]
         points = np.memmap(
-            self.im_idx[index].replace("velodyne", "velodyne_fov")[:-3] + "bin",
+            self.im_idx[index].replace("velodyne", "velodyne_fov_multi")[:-3] + "bin",
             dtype=np.float32,
             mode="r",
         ).reshape((-1, 7))
@@ -234,7 +237,7 @@ class MaskSemanticDataset(Dataset):
 
     def __getitem__(self, index):
         empty = True
-        while empty == True:
+        while empty:
             data = self.dataset[index]
             xyz, intensity, rgb, image, sem_labels, ins_labels, fname, calib, pose, token = data
             keep = np.argwhere(
@@ -355,15 +358,15 @@ class MaskSemanticDataset(Dataset):
             feats = pcd_augmentations(feats)
 
         return (
-            xyz,
-            feats,
-            image,
-            sem_labels,
-            ins_labels,
+            xyz,  # original points coordinates
+            feats,  # augmented coordinates and other textural features
+            image,  # RGB image
+            sem_labels,  # semantic labels in camera fov
+            ins_labels,  # instance labels in camera fov
             masks,
             masks_cls,
             masks_ids,
-            fname,
+            fname,  # file path of original point cloud
             calib,
             pose,
             token,
@@ -409,7 +412,7 @@ def pcd_augmentations(feats):
         feats: np.array, shape=[N, C], xyz coordinates and other features
     """
     # get xyz coordinates
-    xyz = feats[:, :3]
+    xyz = feats[:, 0:3]
     # rotation
     rotate_rad = np.deg2rad(np.random.random() * 360)
     c, s = np.cos(rotate_rad), np.sin(rotate_rad)
@@ -425,12 +428,10 @@ def pcd_augmentations(feats):
     elif flip_type == 3:
         xyz[:, 0] = -xyz[:, 0]
         xyz[:, 1] = -xyz[:, 1]
-
     # scale
     noise_scale = np.random.uniform(0.95, 1.05)
     xyz[:, 0] = noise_scale * xyz[:, 0]
     xyz[:, 1] = noise_scale * xyz[:, 1]
-
     # transform
     trans_std = [0.1, 0.1, 0.1]
     noise_translate = np.array(
@@ -441,9 +442,8 @@ def pcd_augmentations(feats):
         ]
     ).T
     xyz[:, 0:3] += noise_translate
-
     # replace feats with augmented xyz
-    feats[:, :3] = xyz
+    feats[:, 0:3] = xyz
 
     return feats
 

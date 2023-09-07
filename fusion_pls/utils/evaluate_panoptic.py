@@ -92,7 +92,7 @@ class PanopticEvaluator:
         classwise_tables = {}
 
         for idx, (pq, rq, sq, iou) in enumerate(
-            zip(class_all_PQ, class_all_RQ, class_all_SQ, class_all_IoU)
+                zip(class_all_PQ, class_all_RQ, class_all_SQ, class_all_IoU)
         ):
             class_str = self.class_strings[self.class_inv_remap[idx]]
             output_dict[class_str] = {}
@@ -145,6 +145,30 @@ class PanopticEvaluator:
 
     def get_mean_rq(self):
         return self.mean_metrics["rq_mean"]
+
+    def get_mean_pq_dagger(self):
+        return self.mean_metrics["pq_dagger"]
+
+    def get_mean_sq(self):
+        return self.mean_metrics["sq_mean"]
+
+    def get_mean_pq_stuff(self):
+        return self.mean_metrics["pq_stuff"]
+
+    def get_mean_rq_stuff(self):
+        return self.mean_metrics["rq_stuff"]
+
+    def get_mean_sq_stuff(self):
+        return self.mean_metrics["sq_stuff"]
+
+    def get_mean_pq_things(self):
+        return self.mean_metrics["pq_things"]
+
+    def get_mean_rq_things(self):
+        return self.mean_metrics["rq_things"]
+
+    def get_mean_sq_things(self):
+        return self.mean_metrics["sq_things"]
 
     def get_class_metrics(self):
         return self.class_metrics

@@ -85,7 +85,15 @@ class MaskPS(LightningModule):
         self.log("metrics/pq", self.evaluator.get_mean_pq(), batch_size=bs)
         self.log("metrics/iou", self.evaluator.get_mean_iou(), batch_size=bs)
         self.log("metrics/rq", self.evaluator.get_mean_rq(), batch_size=bs)
-        if not "EVALUATE" in self.cfg:
+        self.log("metrics/pq_dagger", self.evaluator.get_mean_pq_dagger(), batch_size=bs)
+        self.log("metrics/sq", self.evaluator.get_mean_sq(), batch_size=bs)
+        self.log("metrics/pq_stuff", self.evaluator.get_mean_pq_stuff(), batch_size=bs)
+        self.log("metrics/rq_stuff", self.evaluator.get_mean_rq_stuff(), batch_size=bs)
+        self.log("metrics/sq_stuff", self.evaluator.get_mean_sq_stuff(), batch_size=bs)
+        self.log("metrics/pq_things", self.evaluator.get_mean_pq_things(), batch_size=bs)
+        self.log("metrics/rq_things", self.evaluator.get_mean_rq_things(), batch_size=bs)
+        self.log("metrics/sq_things", self.evaluator.get_mean_sq_things(), batch_size=bs)
+        if not ("EVALUATE" in self.cfg):
             self.evaluator.reset()
 
     def evaluation_step(self, x: dict, idx):

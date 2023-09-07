@@ -183,7 +183,7 @@ class SemanticDataset(Dataset):
         ).reshape((-1, 7))
         xyz = points[:, :3]
         intensity = points[:, 3]
-        rgb = points[:, 4:7]
+        rgb = points[:, 4:7] / 255.0
         if len(intensity.shape) == 2:
             intensity = np.squeeze(intensity)
         token = "0"

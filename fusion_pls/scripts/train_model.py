@@ -17,9 +17,10 @@ from pytorch_lightning.callbacks import Callback, LearningRateMonitor, ModelChec
 @click.option("--name", "-n", type=str, default="default", required=False)
 @click.option("--version", "-v", type=str, default=None, required=False)
 @click.option("--ckpt", "-c", type=str, default=None, required=False)
+@click.option("--weights", "-w", type=str, default=None, required=False)
 @click.option("--data_path", "-d", type=str, default=None)
 @click.option("--nuscenes", is_flag=False)
-def main(name, version, ckpt, data_path, nuscenes):
+def main(name, version, ckpt, weights, data_path, nuscenes):
     model_cfg = edict(
         yaml.safe_load(open(join(getDir(__file__), "../config/model.yaml")))
     )
@@ -41,6 +42,10 @@ def main(name, version, ckpt, data_path, nuscenes):
 
     data = SemanticDatasetModule(cfg)
     model = MaskPS(cfg)
+
+    if weights is not None:
+        weights = torch.load(weights, map_location="cpu")
+        model.load_state_dict(weights["state_dict"])
 
     # for param in model.backbone.parameters():
     #     param.requires_grad = False
@@ -96,6 +101,7 @@ class PrintMetricsCallback(Callback):
               f"rq: {metrics['metrics/rq']:.4f}; "
               f"iou: {metrics['metrics/iou']:.4f}"
               f"}}")
+
 
 def getDir(obj):
     return os.path.dirname(os.path.abspath(obj))

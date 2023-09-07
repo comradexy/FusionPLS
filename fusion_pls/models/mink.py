@@ -169,11 +169,19 @@ class MinkEncoderDecoder(nn.Module):
         input batch
         The coordinates are quantized using the provided resolution
         """
+        feats = x["feats"]
+        xyzI = [f[:, :4] for f in feats]
+        coords = [f[:, :3] for f in feats]
+        # get batched features(xyzI)
+        features = torch.from_numpy(np.concatenate(xyzI, 0)).float()
+        # get batched coordinates
+        coordinates = ME.utils.batched_coordinates(
+            [i / self.res for i in coords], dtype=torch.float32
+        )
+        # create tensor field
         feat_tfield = ME.TensorField(
-            features=torch.from_numpy(np.concatenate(x["feats"], 0)).float(),
-            coordinates=ME.utils.batched_coordinates(
-                [i / self.res for i in x["pt_coord"]], dtype=torch.float32
-            ),
+            features=features,
+            coordinates=coordinates,
             quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE,
             minkowski_algorithm=ME.MinkowskiAlgorithm.SPEED_OPTIMIZED,
             device="cuda",

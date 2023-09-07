@@ -108,10 +108,10 @@ class MaskPS(LightningModule):
         torch.cuda.empty_cache()
 
     def configure_optimizers(self):
-        backbone_params = list(self.backbone.parameters())
-        other_params = list(self.decoder.parameters()) + \
-                       list(self.mask_loss.parameters()) + \
-                       list(self.sem_loss.parameters())
+        # backbone_params = list(self.backbone.parameters())
+        # other_params = list(self.decoder.parameters()) + \
+        #                list(self.mask_loss.parameters()) + \
+        #                list(self.sem_loss.parameters())
         # optimizer = torch.optim.AdamW([
         #     {'params': backbone_params, 'lr': self.cfg.TRAIN.BACKBONE_LR},
         #     {'params': other_params, 'lr': self.cfg.TRAIN.LR}

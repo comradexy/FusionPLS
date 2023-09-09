@@ -114,6 +114,7 @@ class ColorPointEncoder(nn.Module):
             model_dict.update(pretrained_dict)
             self.load_state_dict(model_dict)
 
+    # TODO: add mode='single' to forward
     def forward(self, x):
         in_field = self.TensorField(x)
 
@@ -142,10 +143,15 @@ class ColorPointEncoder(nn.Module):
         out_feats = [y1, y2, y3, y4]
 
         # vox2feat and apply batchnorm
-        coors = [in_field.decomposed_coordinates for _ in range(len(out_feats))]
-        coors = [[c * self.res for c in coors[i]] for i in range(len(coors))]
+        feats, coords = self.voxel_to_point(in_field, out_feats)
+
+        return feats, coords
+
+    def voxel_to_point(self, in_field, out_feats):
+        coords = [in_field.decomposed_coordinates for _ in range(len(out_feats))]
+        coords = [[c * self.res for c in coords[i]] for i in range(len(coords))]
         bs = in_field.coordinate_manager.number_of_unique_batch_indices()
-        vox_coors = [
+        vox_coords = [
             [l.coordinates_at(i) * self.res for i in range(bs)] for l in out_feats
         ]
         feats = [
@@ -153,18 +159,19 @@ class ColorPointEncoder(nn.Module):
                 bn(self.knn_up(vox_c, vox_f, pt_c))
                 for vox_c, vox_f, pt_c in zip(vc, vf.decomposed_features, pc)
             ]
-            for vc, vf, pc, bn in zip(vox_coors, out_feats, coors, self.out_bnorm)
+            for vc, vf, pc, bn in zip(vox_coords, out_feats, coords, self.out_bnorm)
         ]
+        return feats, coords
 
-        return feats, coors
-
-    def TensorField(self, x):
+    def TensorField(self, x, mode="multi"):
         """
         Build a tensor field from coordinates and features from the
         input batch
         The coordinates are quantized using the provided resolution
         """
         feats = x["feats"]
+        if mode == "single":
+            feats = [f[:, :4] for f in x["feats"]]
         coords = [f[:, :3] for f in feats]
         # get batched features(xyzIrgb)
         features = torch.from_numpy(np.concatenate(feats, 0)).float()

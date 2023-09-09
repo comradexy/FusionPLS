@@ -2,12 +2,12 @@ EXPERIMENT:
     ID: fusion_pls
 
 TRAIN:
-    STEP: 10
-    DECAY: 0.8
+    STEP: 80
+    DECAY: 0.1
     LR: 0.0001
     MAX_EPOCH: 100
     BATCH_SIZE: 4
-    BATCH_ACC: 4
+    BATCH_ACC: 8
     NUM_WORKERS: 16
     N_GPUS: -1
 

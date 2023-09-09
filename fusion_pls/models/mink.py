@@ -16,13 +16,13 @@ class MinkEncoderDecoder(nn.Module):
 
         n_classes = data_cfg.NUM_CLASSES
 
-        input_dim = cfg.INPUT_DIM
+        self.input_dim = cfg.INPUT_DIM
         self.res = cfg.RESOLUTION
         self.knn_up = knn_up(cfg.KNN_UP)
 
         cs = cfg.CHANNELS
         self.stem = nn.Sequential(
-            ME.MinkowskiConvolution(input_dim, cs[0], kernel_size=3, dimension=3),
+            ME.MinkowskiConvolution(self.input_dim, cs[0], kernel_size=3, dimension=3),
             ME.MinkowskiBatchNorm(cs[0]),
 
             ME.MinkowskiReLU(True),
@@ -95,8 +95,6 @@ class MinkEncoderDecoder(nn.Module):
             ]
         )
 
-        # self.sem_head = nn.Linear(cs[-1], 20)
-
         levels = [cs[-i] for i in range(4, 0, -1)]
         self.out_bnorm = nn.ModuleList([nn.BatchNorm1d(l) for l in levels])
 
@@ -144,10 +142,15 @@ class MinkEncoderDecoder(nn.Module):
         out_feats = [y1, y2, y3, y4]
 
         # vox2feat and apply batchnorm
-        coors = [in_field.decomposed_coordinates for _ in range(len(out_feats))]
-        coors = [[c * self.res for c in coors[i]] for i in range(len(coors))]
+        feats, coords = self.voxel_to_point(in_field, out_feats)
+
+        return feats, coords
+
+    def voxel_to_point(self, in_field, out_feats):
+        coords = [in_field.decomposed_coordinates for _ in range(len(out_feats))]
+        coords = [[c * self.res for c in coords[i]] for i in range(len(coords))]
         bs = in_field.coordinate_manager.number_of_unique_batch_indices()
-        vox_coors = [
+        vox_coords = [
             [l.coordinates_at(i) * self.res for i in range(bs)] for l in out_feats
         ]
         feats = [
@@ -155,13 +158,9 @@ class MinkEncoderDecoder(nn.Module):
                 bn(self.knn_up(vox_c, vox_f, pt_c))
                 for vox_c, vox_f, pt_c in zip(vc, vf.decomposed_features, pc)
             ]
-            for vc, vf, pc, bn in zip(vox_coors, out_feats, coors, self.out_bnorm)
+            for vc, vf, pc, bn in zip(vox_coords, out_feats, coords, self.out_bnorm)
         ]
-
-        return feats, coors
-        # feats, coors, pad_masks = self.pad_batch(coors, feats)
-        # logits = self.sem_head(feats[-1])
-        # return feats, coors, pad_masks, logits
+        return feats, coords
 
     def TensorField(self, x):
         """
@@ -170,10 +169,11 @@ class MinkEncoderDecoder(nn.Module):
         The coordinates are quantized using the provided resolution
         """
         feats = x["feats"]
-        xyzI = [f[:, :4] for f in feats]
+        if self.input_dim == 4:
+            feats = [f[:, :4] for f in x["feats"]]
         coords = [f[:, :3] for f in feats]
-        # get batched features(xyzI)
-        features = torch.from_numpy(np.concatenate(xyzI, 0)).float()
+        # get batched features(xyzIrgb)
+        features = torch.from_numpy(np.concatenate(feats, 0)).float()
         # get batched coordinates
         coordinates = ME.utils.batched_coordinates(
             [i / self.res for i in coords], dtype=torch.float32

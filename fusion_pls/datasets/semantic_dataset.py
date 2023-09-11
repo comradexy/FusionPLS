@@ -15,7 +15,6 @@ class SemanticDatasetModule(LightningDataModule):
         self.things_ids = []
         self.color_map = []
         self.label_names = []
-        self.dataset = cfg.MODEL.DATASET
         self.train_mask_set = None
         self.val_mask_set = None
         self.test_mask_set = None
@@ -25,10 +24,8 @@ class SemanticDatasetModule(LightningDataModule):
 
     def setup(self, stage=None):
         train_set = SemanticDataset(
-            self.cfg[self.cfg.MODEL.DATASET].PATH + "/sequences/",
-            self.cfg[self.cfg.MODEL.DATASET].CONFIG,
+            cfg=self.cfg,
             split="train",
-            dataset=self.dataset,
         )
         self.train_mask_set = MaskSemanticDataset(
             dataset=train_set,
@@ -41,10 +38,8 @@ class SemanticDatasetModule(LightningDataModule):
         )
 
         val_set = SemanticDataset(
-            self.cfg[self.cfg.MODEL.DATASET].PATH + "/sequences/",
-            self.cfg[self.cfg.MODEL.DATASET].CONFIG,
+            cfg=self.cfg,
             split="valid",
-            dataset=self.dataset,
         )
         self.val_mask_set = MaskSemanticDataset(
             dataset=val_set,
@@ -54,10 +49,8 @@ class SemanticDatasetModule(LightningDataModule):
         )
 
         test_set = SemanticDataset(
-            self.cfg[self.cfg.MODEL.DATASET].PATH + "/sequences/",
-            self.cfg[self.cfg.MODEL.DATASET].CONFIG,
+            cfg=self.cfg,
             split="test",
-            dataset=self.dataset,
         )
         self.test_mask_set = MaskSemanticDataset(
             dataset=test_set,
@@ -117,16 +110,20 @@ class SemanticDatasetModule(LightningDataModule):
 
 
 class SemanticDataset(Dataset):
-    def __init__(self, data_path, cfg_path, split="train", dataset="KITTI"):
-        yaml_path = cfg_path
+    def __init__(self, cfg, split="train"):
+        self.cfg = cfg
+        self.dataset = cfg.MODEL.DATASET
+        data_path = cfg[self.dataset].PATH + "/sequences/"
+        yaml_path = cfg[self.dataset].CONFIG
+
         with open(yaml_path, "r") as stream:
             semyaml = yaml.safe_load(stream)
 
-        self.things = get_things(dataset)
-        self.stuff = get_stuff(dataset)
+        self.things = get_things(self.dataset)
+        self.stuff = get_stuff(self.dataset)
 
         self.label_names = {**self.things, **self.stuff}
-        self.things_ids = get_things_ids(dataset)
+        self.things_ids = get_things_ids(self.dataset)
 
         self.color_map = semyaml["color_map_learning"]
         self.labels = semyaml["labels"]
@@ -139,7 +136,7 @@ class SemanticDataset(Dataset):
         pose_files = []
         calib_files = []
         token_files = []
-        fill = 2 if dataset == "KITTI" else 4
+        fill = 2 if self.dataset == "KITTI" else 4
         for i_folder in split:
             self.im_idx += absoluteFilePaths(
                 "/".join([data_path, str(i_folder).zfill(fill), "velodyne"])
@@ -154,7 +151,7 @@ class SemanticDataset(Dataset):
                     "/".join([data_path, str(i_folder).zfill(fill), "calib.txt"])
                 )
             )
-            if dataset == "NUSCENES":
+            if self.dataset == "NUSCENES":
                 token_files.append(
                     absoluteDirPath(
                         "/".join(
@@ -204,8 +201,11 @@ class SemanticDataset(Dataset):
             sem_labels = annotated_data & 0xFFFF
             ins_labels = annotated_data >> 16
             sem_labels = np.vectorize(self.learning_map.__getitem__)(sem_labels)
-        image = Image.open(self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png")
-        image = np.array(image)
+        if self.cfg[self.dataset].IMAGE:
+            image = Image.open(self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png")
+            image = np.array(image)
+        else:
+            image = np.array([])
 
         return (xyz, intensity, rgb, image, sem_labels, ins_labels, fname, calib, pose, token)
 

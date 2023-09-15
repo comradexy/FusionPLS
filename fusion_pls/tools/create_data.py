@@ -11,8 +11,8 @@ from tqdm import tqdm
 from multiprocessing.pool import ThreadPool
 
 
-def pcd_painting(pts, img, Trv2c, P2):
-    """Paint points with image.
+def feats_proj_img2pcd(pts, img, Trv2c, P2):
+    """Project image features to point cloud.
 
     Note:
         This function is for KITTI only.
@@ -25,7 +25,7 @@ def pcd_painting(pts, img, Trv2c, P2):
         P2 (p.array, shape=[4, 4]): Intrinsics of Camera2.
 
     Returns:
-        colors: np.ndarray, shape=[N, 3]: RGB(normalized) of points.
+        img_feats: np.ndarray, shape=[N, 5]: points with image features(uvrgb).
     """
     # Convert points from lidar coordinate to camera coordinate
     pts_cam = lidar_to_camera(pts, Trv2c, P2)
@@ -33,19 +33,18 @@ def pcd_painting(pts, img, Trv2c, P2):
     pts_img = pts_cam[:, :2] / pts_cam[:, 2:]
     # Convert image coordinate to pixel coordinates
     pts_img = pts_img.astype(np.int32)
-    # Get RGB colors from image
+    # Get RGB colors and UV coordinates from image
     image = Image.fromarray(img)
-    colors = []
+    img_feats = []
     for pt in pts_img:
         x, y = pt
         x = min(max(x, 0), img.shape[1] - 1)
         y = min(max(y, 0), img.shape[0] - 1)
         rgb = image.getpixel((x, y))
-        colors.append(rgb)
-    colors = np.array(colors)
-    # # Normalize RGB
-    # colors = colors / 255.0
-    return colors
+        uv = np.array([x, y])
+        img_feats.append(np.concatenate([uv, rgb]))
+    img_feats = np.array(img_feats)
+    return img_feats
 
 
 def remove_outside_points(points, Trv2c, P2, image_shape, rect=None):
@@ -329,17 +328,11 @@ def process_sequence(seq, src_path, dst_path, pbar):
     seq_labels_src_path = os.path.join(seq_src_path, 'labels')
 
     seq_velo_dst_path = os.path.join(seq_dst_path, 'velodyne')
-    seq_vfs_dst_path = os.path.join(seq_dst_path, 'velodyne_fov_single')
-    seq_vfm_dst_path = os.path.join(seq_dst_path, 'velodyne_fov_multi')
-    seq_ind_dst_path = os.path.join(seq_dst_path, 'indices_fov')
     seq_image_dst_path = os.path.join(seq_dst_path, 'image_2')
-    seq_labels_dst_path = os.path.join(seq_dst_path, 'labels_fov')
+    seq_labels_dst_path = os.path.join(seq_dst_path, 'labels')
 
     os.makedirs(seq_velo_dst_path, exist_ok=True)
-    os.makedirs(seq_vfs_dst_path, exist_ok=True)
-    os.makedirs(seq_vfm_dst_path, exist_ok=True)
     os.makedirs(seq_image_dst_path, exist_ok=True)
-    os.makedirs(seq_ind_dst_path, exist_ok=True)
     os.makedirs(seq_labels_dst_path, exist_ok=True)
 
     # for frame in tqdm(os.listdir(seq_velo_src_path), desc='Processing seq ' + seq):
@@ -353,26 +346,30 @@ def process_sequence(seq, src_path, dst_path, pbar):
         # image = Image.open(os.path.join(seq_image_src_path, num + '.png'))
         # image_size = image.size[::-1]
         image_size = imagesize.get(os.path.join(seq_image_src_path, num + '.png'))[::-1]
-        reduced_points, indices = remove_outside_points(points, Tr, P2, list(image_size))
+        reduced_pts, indices = remove_outside_points(points, Tr, P2, list(image_size))
 
-        # save indices to file, dtype=np.bool_
-        np.memmap(os.path.join(seq_ind_dst_path, num + '.bin'),
-                  dtype=np.bool_,
-                  mode='w+',
-                  shape=indices.shape)[:] = indices[:]
+        # # save indices to file, dtype=np.bool_
+        # np.memmap(os.path.join(seq_ind_dst_path, num + '.bin'),
+        #           dtype=np.bool_,
+        #           mode='w+',
+        #           shape=indices.shape)[:] = indices[:]
 
-        # save cropped single-modal frame to file
-        np.memmap(os.path.join(seq_vfs_dst_path, num + '.bin'),
-                  dtype=np.float32,
-                  mode='w+',
-                  shape=reduced_points.shape)[:] = reduced_points[:]
+        # # save cropped single-modal frame to file
+        # np.memmap(os.path.join(seq_vfs_dst_path, num + '.bin'),
+        #           dtype=np.float32,
+        #           mode='w+',
+        #           shape=reduced_pts.shape)[:] = reduced_pts[:]
 
         # save cropped multi-modal frame to file
         image = Image.open(os.path.join(seq_image_src_path, num + '.png'))
         image = np.array(image)
-        color_pts = pcd_painting(reduced_points[:, :3], image, Tr, P2)
-        fused_pts = np.concatenate([reduced_points, color_pts], axis=1)
-        np.memmap(os.path.join(seq_vfm_dst_path, num + '.bin'),
+        fused_pts = np.concatenate(
+            [
+                reduced_pts,  # xyzi
+                feats_proj_img2pcd(reduced_pts[:, :3], image, Tr, P2),  # uvrgb
+            ],
+            axis=1)
+        np.memmap(os.path.join(seq_velo_dst_path, num + '.bin'),
                   dtype=np.float32,
                   mode='w+',
                   shape=fused_pts.shape)[:] = fused_pts[:]

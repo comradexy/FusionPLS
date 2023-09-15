@@ -17,6 +17,7 @@ class MinkEncoderDecoder(nn.Module):
         n_classes = data_cfg.NUM_CLASSES
 
         self.input_dim = cfg.INPUT_DIM
+        self.modality = cfg.MODALITY
         self.res = cfg.RESOLUTION
         self.knn_up = knn_up(cfg.KNN_UP)
 
@@ -98,12 +99,13 @@ class MinkEncoderDecoder(nn.Module):
         levels = [cs[-i] for i in range(4, 0, -1)]
         self.out_bnorm = nn.ModuleList([nn.BatchNorm1d(l) for l in levels])
 
-        if cfg.PRETRAINED is not None:
-            self.init_weights(cfg.PRETRAINED)
+        self.init_weights(cfg.PRETRAINED)
+        if cfg.FREEZE:
+            for param in self.parameters():
+                param.requires_grad = False
 
     def init_weights(self, pretrained=None):
         if pretrained is not None:
-            print("load pretrained model from {}".format(pretrained))
             pretrained_dict = torch.load(pretrained)
             model_dict = self.state_dict()
             pretrained_dict = {
@@ -168,11 +170,23 @@ class MinkEncoderDecoder(nn.Module):
         input batch
         The coordinates are quantized using the provided resolution
         """
-        feats = x["feats"]
-        if self.input_dim == 4:
+        if self.modality == "xyzi" and self.input_dim == 4:
             feats = [f[:, :4] for f in x["feats"]]
-        coords = [f[:, :3] for f in feats]
-        # get batched features(xyzIrgb)
+        elif self.modality == "xyzirgb" and self.input_dim == 7:
+            feats = x["feats"]
+        elif self.modality == "xyzrgb" and self.input_dim == 6:
+            feats = [f[:, [0, 1, 2, 4, 5, 6]] for f in x["feats"]]
+        elif self.modality == "rgb" and self.input_dim == 3:
+            feats = [f[:, -3:] for f in x["feats"]]
+        elif self.modality == "drgb" and self.input_dim == 4:
+            depth = [np.linalg.norm(f[:, :3], axis=1, keepdims=True) for f in x["feats"]]
+            feats = [np.concatenate([d, f[:, -3:]], axis=1) for f, d in zip(x["feats"], depth)]
+        else:
+            raise Exception(
+                f"modality '{self.modality}' with input_dim {self.input_dim} not supported"
+            )
+        coords = [f[:, :3] for f in x["feats"]]
+        # get batched features
         features = torch.from_numpy(np.concatenate(feats, 0)).float()
         # get batched coordinates
         coordinates = ME.utils.batched_coordinates(

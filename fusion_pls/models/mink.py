@@ -172,15 +172,17 @@ class MinkEncoderDecoder(nn.Module):
         """
         if self.modality == "xyzi" and self.input_dim == 4:
             feats = [f[:, :4] for f in x["feats"]]
-        elif self.modality == "xyzirgb" and self.input_dim == 7:
+        elif self.modality == "xyziuvrgb" and self.input_dim == 9:
             feats = x["feats"]
         elif self.modality == "xyzrgb" and self.input_dim == 6:
-            feats = [f[:, [0, 1, 2, 4, 5, 6]] for f in x["feats"]]
+            feats = [f[:, [0, 1, 2, 6, 7, 8]] for f in x["feats"]]
+        elif self.modality == "uvrgb" and self.input_dim == 5:
+            feats = [f[:, -5:] for f in x["feats"]]
         elif self.modality == "rgb" and self.input_dim == 3:
             feats = [f[:, -3:] for f in x["feats"]]
-        elif self.modality == "drgb" and self.input_dim == 4:
+        elif self.modality == "uvdrgb" and self.input_dim == 6:
             depth = [np.linalg.norm(f[:, :3], axis=1, keepdims=True) for f in x["feats"]]
-            feats = [np.concatenate([d, f[:, -3:]], axis=1) for f, d in zip(x["feats"], depth)]
+            feats = [np.concatenate([f[:, 4:6], d, f[:, -3:]], axis=1) for f, d in zip(x["feats"], depth)]
         else:
             raise Exception(
                 f"modality '{self.modality}' with input_dim {self.input_dim} not supported"

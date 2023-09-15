@@ -35,6 +35,7 @@ def main(w, save_testset, nuscenes, data_path):
     cfg.BACKBONE.PRETRAINED = None
     cfg.BACKBONE.MINK.PRETRAINED = None
     cfg.BACKBONE.CPE.PRETRAINED = None
+    cfg.TRAIN.BATCH_SIZE = 4
     if save_testset:
         results_dir = create_dirs(nuscenes)
         print(f"Saving test set predictions in directory {results_dir}")
@@ -59,7 +60,7 @@ def main(w, save_testset, nuscenes, data_path):
         logger=False)
 
     if save_testset:
-        trainer.test(model, data)
+        trainer.tddddsfsdfsdfsdfsfsdest(model, data)
     else:
         trainer.validate(model, data)
     model.evaluator.print_results()

@@ -1,7 +1,9 @@
-import os
-# import subprocess
-from os.path import join
+import warnings
 
+warnings.filterwarnings("ignore")
+
+import os
+from os.path import join
 import click
 import torch
 import yaml
@@ -22,13 +24,13 @@ from pytorch_lightning.callbacks import Callback, LearningRateMonitor, ModelChec
 @click.option("--nuscenes", is_flag=False)
 def main(name, version, ckpt, weights, data_path, nuscenes):
     model_cfg = edict(
-        yaml.safe_load(open(join(getDir(__file__), "../config/model.yaml")))
+        yaml.safe_load(open(join(get_dir(__file__), "../config/model.yaml")))
     )
     backbone_cfg = edict(
-        yaml.safe_load(open(join(getDir(__file__), "../config/backbone.yaml")))
+        yaml.safe_load(open(join(get_dir(__file__), "../config/backbone.yaml")))
     )
     decoder_cfg = edict(
-        yaml.safe_load(open(join(getDir(__file__), "../config/decoder.yaml")))
+        yaml.safe_load(open(join(get_dir(__file__), "../config/decoder.yaml")))
     )
     cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
 
@@ -49,10 +51,10 @@ def main(name, version, ckpt, weights, data_path, nuscenes):
 
     # for param in model.backbone.parameters():
     #     param.requires_grad = False
-    for param in model.backbone.mink.parameters():
-        param.requires_grad = False
-    for param in model.backbone.cpe.parameters():
-        param.requires_grad = False
+    # for param in model.backbone.mink.parameters():
+    #     param.requires_grad = False
+    # for param in model.backbone.cpe.parameters():
+    #     param.requires_grad = False
 
     tb_logger = pl_loggers.TensorBoardLogger(
         save_dir="experiments/" + cfg.EXPERIMENT.ID,
@@ -61,25 +63,29 @@ def main(name, version, ckpt, weights, data_path, nuscenes):
         default_hp_metric=False,
     )
 
+    # save torch seed
+    save_dir = tb_logger.log_dir
+    save_seeds(save_dir)
+
     # Callbacks
     lr_monitor = LearningRateMonitor(logging_interval="step")
     iou_ckpt = ModelCheckpoint(
         monitor="metrics/iou",
-        filename=cfg.EXPERIMENT.ID + "_epoch{epoch:02d}_iou{metrics/iou:.2f}",
+        filename=cfg.EXPERIMENT.ID + "_epoch{epoch:02d}_iou{metrics/iou:.4f}",
         auto_insert_metric_name=False,
         mode="max",
         save_last=True,
     )
     pq_ckpt = ModelCheckpoint(
         monitor="metrics/pq",
-        filename=cfg.EXPERIMENT.ID + "_epoch{epoch:02d}_pq{metrics/pq:.2f}",
+        filename=cfg.EXPERIMENT.ID + "_epoch{epoch:02d}_pq{metrics/pq:.4f}",
         auto_insert_metric_name=False,
         mode="max",
         save_last=True,
     )
     pq_dagger_ckpt = ModelCheckpoint(
         monitor="metrics/pq_dagger",
-        filename=cfg.EXPERIMENT.ID + "_epoch{epoch:02d}_pq{metrics/pq_dagger:.2f}",
+        filename=cfg.EXPERIMENT.ID + "_epoch{epoch:02d}_pq_dagger{metrics/pq_dagger:.4f}",
         auto_insert_metric_name=False,
         mode="max",
         save_last=True,
@@ -87,7 +93,8 @@ def main(name, version, ckpt, weights, data_path, nuscenes):
 
     trainer = Trainer(
         gpus=cfg.TRAIN.N_GPUS,
-        accelerator="ddp",
+        # accelerator="ddp",  # deprecated
+        strategy="ddp",
         logger=tb_logger,
         max_epochs=cfg.TRAIN.MAX_EPOCH,
         callbacks=[lr_monitor, pq_ckpt, iou_ckpt, pq_dagger_ckpt],
@@ -100,7 +107,21 @@ def main(name, version, ckpt, weights, data_path, nuscenes):
     trainer.fit(model, data)
 
 
-def getDir(obj):
+def save_seeds(save_dir):
+    torch_seed = torch.initial_seed()
+    if torch.cuda.is_available():
+        torch_cuda_seed = torch.cuda.initial_seed()
+    else:
+        torch_cuda_seed = "N/A"
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    file_path = os.path.join(save_dir, "seeds.txt")
+    with open(file_path, "w") as f:
+        f.write(f"torch seed: {torch_seed}\n"
+                f"torch cuda seed: {torch_cuda_seed}")
+
+
+def get_dir(obj):
     return os.path.dirname(os.path.abspath(obj))
 
 

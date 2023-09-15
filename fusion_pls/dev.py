@@ -100,18 +100,15 @@ def TensorField(x, res):
     input batch
     The coordinates are quantized using the provided resolution
     """
-    # fuse feats and rgb
     feats = torch.from_numpy(np.concatenate(x["feats"], 0)).float()
-    rgb = torch.from_numpy(np.concatenate(x["rgb"], 0)).float()
-    features = torch.cat([feats, rgb], dim=1)
     # features = torch.from_numpy(np.concatenate(x["feats"], 0)).float()
-    coordinates = ME.utils.batched_coordinates(
+    coords = ME.utils.batched_coordinates(
         [i / res for i in x["pt_coord"]], dtype=torch.float32
     )
 
     feat_tfield = ME.TensorField(
-        features=features,
-        coordinates=coordinates,
+        features=feats,
+        coordinates=coords,
         quantization_mode=ME.SparseTensorQuantizationMode.UNWEIGHTED_AVERAGE,
         minkowski_algorithm=ME.MinkowskiAlgorithm.SPEED_OPTIMIZED,
         device="cuda",
@@ -122,7 +119,7 @@ def TensorField(x, res):
 
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(device)
+    # print(device)
     model_cfg = edict(
         yaml.safe_load(open(join(getDir(__file__), "./config/model.yaml")))
     )
@@ -133,6 +130,7 @@ if __name__ == '__main__':
         yaml.safe_load(open(join(getDir(__file__), "./config/decoder.yaml")))
     )
     cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
+    cfg.TRAIN.BATCH_SIZE = 1
 
     # backbone = FusionEncoder(cfg.BACKBONE, cfg[cfg.MODEL.DATASET])
     # backbone = backbone.to(device)
@@ -140,8 +138,8 @@ if __name__ == '__main__':
     # cpe = ColorPointEncoder(cfg.BACKBONE.CPE, cfg[cfg.MODEL.DATASET])
     # cpe = cpe.to(device)
 
-    model = MaskPS(cfg)
-    model.to(device)
+    # model = MaskPS(cfg)
+    # model.to(device)
     cfg.KITTI.PATH = '/data/dxy/SemanticKittiF/dataset'
     data = SemanticDatasetModule(cfg)
     data.setup()
@@ -155,46 +153,17 @@ if __name__ == '__main__':
 
     sample = next(test_iter)
 
-    # xyz = sample['pt_coord']
-    # feats = sample['feats']
-    # rgb = sample['rgb']
-    # intensity = [feats[0][:, -1:]]
-    # print(f'xyz: type--{type(xyz[0])}; shape--{xyz[0].shape}')
-    # print(f'feats: type--{type(feats[0])}; shape--{feats[0].shape}')
-    # print(f'rgb: type--{type(rgb[0])}; shape--{rgb[0].shape}')
-    # print(f'intensity: type--{type(intensity[0])}; shape--{intensity[0].shape}')
+    print(f"pts_feats: {sample['feats'][0].shape}")
+    print(f"pts_coord: {sample['pt_coord'][0].shape}")
+    tf = TensorField(sample, 0.1)
+    st = tf.sparse()
+    coords = st.C.float()
+    feats = st.F.float()
+    assert type(coords) == torch.Tensor and type(feats) == torch.Tensor, \
+        "coords and feats should be torch.Tensor"
+    print(f"vox_feats: {feats.shape}")
+    print(f"vox_coords: {coords.shape}")
 
-    # xyz = torch.from_numpy(xyz[0]).to(device).reshape(1, -1, 3)
-    # rgb = torch.from_numpy(rgb[0]).to(device).reshape(1, -1, 3)
-    # intensity = torch.from_numpy(intensity[0]).to(device).reshape(1, -1, 1)
-    # color_feats = color_encoder(rgb, intensity, xyz)
-    # print(f'color_feats: type--{type(color_feats)}; shape--{color_feats.shape}')
-
-    # feats, coors = cpe(sample)
-    # for i in range(len(feats)):
-    #     print(f'level{i}:')
-    #     for j in range(len(feats[i])):
-    #         print(f'  feats_batch{j}: shape--{feats[i][j].shape}')
-    # for i in range(len(coors)):
-    #     print(f'level{i}:')
-    #     for j in range(len(coors[i])):
-    #         print(f'  coors_batch{j}: shape--{coors[i][j].shape}')
-
-    # outputs, padding, bb_logits = model(sample)
-    # print(outputs['pred_logits'].shape)
-    # print(outputs['pred_masks'].shape)
-    # for i in range(len(outputs['aux_outputs'])):
-    #     print(f'aux_outputs{i}:')
-    #     for k, v in outputs['aux_outputs'][i].items():
-    #         print(f'  {k}: shape--{v.shape}')
-    # print(f"padding.shape: {padding.shape}")
-    # print(f"bb_logits.shape: {bb_logits.shape}")
-
-    # print(model)
-    # print(sample.keys())
-    #
-    outputs, padding, bb_logits = model(sample)
-    # print(outputs)
 
 
 

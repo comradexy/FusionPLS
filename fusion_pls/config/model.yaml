@@ -2,7 +2,7 @@ EXPERIMENT:
     ID: fusion_pls
 
 TRAIN:
-    STEP: 80
+    STEP: 50
     DECAY: 0.1
     LR: 0.0001
     MAX_EPOCH: 100

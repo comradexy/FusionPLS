@@ -50,11 +50,13 @@ class SemanticDatasetModule(LightningDataModule):
 
         test_set = SemanticDataset(
             cfg=self.cfg,
-            split="test",
+            # split="test",
+            split="valid",
         )
         self.test_mask_set = MaskSemanticDataset(
             dataset=test_set,
-            split="test",
+            # split="test",
+            split="valid",
             min_pts=self.cfg[self.cfg.MODEL.DATASET].MIN_POINTS,
             space=self.cfg[self.cfg.MODEL.DATASET].SPACE,
         )
@@ -175,14 +177,17 @@ class SemanticDataset(Dataset):
         calib = self.calibs[index]
         # points feats: xyziuvrgb
         points = np.memmap(
+            # self.im_idx[index].replace("velodyne", "velodyne_fov_multi")[:-3] + "bin",
             self.im_idx[index],
             dtype=np.float32,
             mode="r",
+        # ).reshape((-1, 7))
         ).reshape((-1, 9))
         xyz = points[:, :3]
         intensity = points[:, 3]
         uv = points[:, 4:6]
-        rgb = points[:, 6:9] / 255.0
+        # rgb = points[:, 6:9] / 255.0
+        rgb = points[:, -3:] / 255.0
         if len(intensity.shape) == 2:
             intensity = np.squeeze(intensity)
         token = "0"
@@ -209,7 +214,19 @@ class SemanticDataset(Dataset):
         else:
             image = np.array([])
 
-        return (xyz, intensity, uv, rgb, image, sem_labels, ins_labels, fname, calib, pose, token)
+        return (
+            xyz,
+            intensity,
+            uv,
+            rgb,
+            image,
+            sem_labels,
+            ins_labels,
+            fname,
+            calib,
+            pose,
+            token,
+        )
 
 
 class MaskSemanticDataset(Dataset):
@@ -242,6 +259,7 @@ class MaskSemanticDataset(Dataset):
         while empty:
             data = self.dataset[index]
             xyz, intensity, uv, rgb, image, sem_labels, ins_labels, fname, calib, pose, token = data
+            # xyz, intensity, rgb, image, sem_labels, ins_labels, fname, calib, pose, token = data
             keep = np.argwhere(
                 (self.xlim[0] < xyz[:, 0])
                 & (xyz[:, 0] < self.xlim[1])

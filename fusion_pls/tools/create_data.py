@@ -8,6 +8,7 @@ import imagesize
 import datetime
 from PIL import Image
 from tqdm import tqdm
+import multiprocessing
 from multiprocessing.pool import ThreadPool
 
 
@@ -37,13 +38,13 @@ def feats_proj_img2pcd(pts, img, Trv2c, P2):
     image = Image.fromarray(img)
     img_feats = []
     for pt in pts_img:
-        x, y = pt
-        x = min(max(x, 0), img.shape[1] - 1)
-        y = min(max(y, 0), img.shape[0] - 1)
-        rgb = image.getpixel((x, y))
-        uv = np.array([x, y])
-        img_feats.append(np.concatenate([uv, rgb]))
-    img_feats = np.array(img_feats)
+        u, v = pt
+        u = min(max(u, 0), img.shape[1] - 1)
+        v = min(max(v, 0), img.shape[0] - 1)
+        rgb = image.getpixel((u, v))
+        coord = np.array([u, v])
+        img_feats.append(np.concatenate([coord, rgb]))
+    img_feats = np.array(img_feats).reshape(-1, 5)
     return img_feats
 
 
@@ -363,10 +364,20 @@ def process_sequence(seq, src_path, dst_path, pbar):
         # save cropped multi-modal frame to file
         image = Image.open(os.path.join(seq_image_src_path, num + '.png'))
         image = np.array(image)
+        img_to_pts = feats_proj_img2pcd(reduced_pts[:, :3], image, Tr, P2)
+        assert (reduced_pts.shape[0] == img_to_pts.shape[0]), \
+            f"not same number of points: reduced_pts " \
+            f"{reduced_pts.shape[0]}, img_to_pts {img_to_pts.shape[0]} "
+        assert (reduced_pts.shape[1] == 4), \
+            f"feat_dim error for reduced_pts: " \
+            f"expect 4, but get {reduced_pts.shape[1]}"
+        assert (img_to_pts.shape[1] == 5), \
+            f"feat_dim error for img_to_pts: " \
+            f"expect 5, but get {img_to_pts.shape[1]}"
         fused_pts = np.concatenate(
             [
                 reduced_pts,  # xyzi
-                feats_proj_img2pcd(reduced_pts[:, :3], image, Tr, P2),  # uvrgb
+                img_to_pts,  # uvrgb
             ],
             axis=1)
         np.memmap(os.path.join(seq_velo_dst_path, num + '.bin'),
@@ -376,11 +387,11 @@ def process_sequence(seq, src_path, dst_path, pbar):
 
         # if dst and src are the same, this step is unnecessary
         if not os.path.samefile(seq_image_src_path, seq_image_dst_path):
-            # copy points to dst
-            np.memmap(os.path.join(seq_velo_dst_path, num + '.bin'),
-                      dtype=np.float32,
-                      mode='w+',
-                      shape=points.shape)[:] = points[:]
+            # # copy points to dst
+            # np.memmap(os.path.join(seq_velo_dst_path, num + '.bin'),
+            #           dtype=np.float32,
+            #           mode='w+',
+            #           shape=points.shape)[:] = points[:]
 
             # copy image to dst
             shutil.copy(os.path.join(seq_image_src_path, num + '.png'),
@@ -447,7 +458,7 @@ def create_cropped_point_cloud(src, dst):
     print('SemanticKittiF dataset created.')
 
 
-def _create_cropped_point_cloud(src, dst):
+def _create_cropped_point_cloud(src, dst, all_seq):
     """Create SemanticKittiF dataset with multi-threading.
     Args:
         src (str): Path to the raw dataset.
@@ -460,12 +471,17 @@ def _create_cropped_point_cloud(src, dst):
 
     # Get the list of sequences
     sequences = sorted(os.listdir(src_path))
+    if not all_seq:
+        # Only store seq 00-10
+        sequences = sequences[:11]
     total = 0
     for seq in sequences:
         total += len(os.listdir(os.path.join(src_path, seq, 'velodyne')))
     pbar = tqdm(total=total, desc='Creating SemanticKittiF dataset')
 
     # Create a thread pool
+    # num_threads = 2 * multiprocessing.cpu_count()
+    # pool = ThreadPool(num_threads)
     pool = ThreadPool()
 
     # Process sequences in parallel
@@ -493,9 +509,11 @@ def _create_cropped_point_cloud(src, dst):
 parser = argparse.ArgumentParser(description='Data converter arg parser')
 parser.add_argument('--src', type=str, default='./data/kitti/', help='source path')
 parser.add_argument('--dst', type=str, default='./data/kitti_f/', help='destination path')
+parser.add_argument('--all_seq', action="store_true", default=False, help='store all sequences, default: store seq 00-10')
 
 if __name__ == '__main__':
     args = parser.parse_args()
     src = args.src
     dst = args.dst
-    _create_cropped_point_cloud(src, dst)
+    all_seq = args.all_seq
+    _create_cropped_point_cloud(src, dst, all_seq)

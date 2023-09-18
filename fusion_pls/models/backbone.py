@@ -53,27 +53,25 @@ class FusionEncoder(nn.Module):
         self.sem_head = nn.Linear(sem_head_in_dim, 20)
 
     def forward(self, x):
-        mn_feats, mn_coords = self.mink(x)
-        ef_feats, ef_coords = self.cpe(x)
-        mn_feats, mn_coords, mn_pad_masks = self.pad_batch(mn_coords, mn_feats)
-        ef_feats, ef_coords, ef_pad_masks = self.pad_batch(ef_coords, ef_feats)
+        pcd_feats, pcd_coords = self.mink(x)
+        img_feats, img_coords = self.cpe(x)
+        pcd_feats, pcd_coords, pcd_pad_masks = self.pad_batch(pcd_coords, pcd_feats)
+        img_feats, img_coords, img_pad_masks = self.pad_batch(img_coords, img_feats)
 
         # auto-weighted feature fusion
         feats = []
-        coords = mn_coords
-        pad_masks = mn_pad_masks
+        coords = pcd_coords
+        pad_masks = pcd_pad_masks
         for level in range(self.n_levels):
             # mn_pos = self.pos_enc[level](mn_coords[level])
             # ef_pos = self.pos_enc[level](ef_coords[level])
             feats.append(
                 self.fusion[level](
-                    ef_feats[level],
-                    mn_feats[level],
+                    img_feats[level],
+                    pcd_feats[level],
                 )
             )
 
-        # feats = mn_feats
-        # coords = mn_coords
 
         logits = self.sem_head(feats[-1])
         return feats, coords, pad_masks, logits
@@ -153,17 +151,20 @@ class AutoWeightedFeatureFusion(nn.Module):
 class FusionQueriesGenerator(nn.Module):
     def __init__(self, num_queries, hidden_dim, num_heads, ffn_hidden_dim=2048, dropout=0.0):
         super().__init__()
-
         self.num_queries = num_queries
-        self.hidden_dim = hidden_dim
-        self.query_feat = nn.Embedding(num_queries, hidden_dim)
+
+        self.query_feat_m1 = nn.Embedding(num_queries, hidden_dim)
+        self.query_embed_m1 = nn.Embedding(num_queries, hidden_dim)
+
+        self.query_feat_m2 = nn.Embedding(num_queries, hidden_dim)
+        self.query_embed_m2 = nn.Embedding(num_queries, hidden_dim)
+
+        self.query_generator = MLP(2 * num_queries, 2 * num_queries, num_queries, 3)
 
     def forward(
             self,
-            q_feats_m1,
-            kv_feats_m2,
-            pad_masks_m2: Optional[Tensor] = None,
-            q_pos_m1: Optional[Tensor] = None,
-            kv_pos_m2: Optional[Tensor] = None,
+            feats_m1, coors_m1, pad_masks_m1,
+            feats_m2, coors_m2, pad_masks_m2,
     ):
         pass
+

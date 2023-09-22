@@ -6,10 +6,7 @@ from typing import Optional
 from fusion_pls.models.color_encoder import ColorPointEncoder
 from fusion_pls.models.mink import MinkEncoderDecoder
 from fusion_pls.models.positional_encoder import PositionalEncoder
-from fusion_pls.models.blocks import (SelfAttentionLayer,
-                                      CrossModalAttentionLayer,
-                                      FFNLayer,
-                                      MLP)
+import fusion_pls.models.blocks as blocks
 
 
 class FusionEncoder(nn.Module):
@@ -20,41 +17,43 @@ class FusionEncoder(nn.Module):
     def __init__(self, cfg: object, data_cfg: object) -> object:
         super().__init__()
 
-        # init mono pts encoder
-        cfg.MINK.CHANNELS = cfg.CHANNELS
-        cfg.MINK.KNN_UP = cfg.KNN_UP
-        self.mink = MinkEncoderDecoder(cfg.MINK, data_cfg)
+        # init raw pts encoder
+        cfg.PCD.CHANNELS = cfg.CHANNELS
+        cfg.PCD.KNN_UP = cfg.KNN_UP
+        self.pcd_enc = MinkEncoderDecoder(cfg.PCD, data_cfg)
 
-        # init early-fused pts encoder
-        cfg.CPE.CHANNELS = cfg.CHANNELS
-        cfg.CPE.KNN_UP = cfg.KNN_UP
-        self.cpe = MinkEncoderDecoder(cfg.CPE, data_cfg)
+        # init img_to_pcd pts encoder
+        cfg.IMG.CHANNELS = cfg.CHANNELS
+        cfg.IMG.KNN_UP = cfg.KNN_UP
+        self.img_enc = MinkEncoderDecoder(cfg.IMG, data_cfg)
 
         # init fusion encoder
         self.n_levels = cfg.FUSION.N_LEVELS
-        # self.pos_enc = nn.ModuleList()
+        self.out_dim = cfg.FUSION.OUT_DIM
+        if isinstance(self.out_dim, int):
+            self.out_dim = [cfg.FUSION.OUT_DIM] * self.n_levels
+        self.pcd_out_dim = cfg.PCD.CHANNELS[-self.n_levels:]
+        self.img_out_dim = cfg.IMG.CHANNELS[-self.n_levels:]
         self.fusion = nn.ModuleList()
         for level in range(self.n_levels):
-            # cfg.FUSION.POS_ENC.FEAT_SIZE = cfg.FUSION.OUT_DIM[level]
-            # self.pos_enc.append(
-            #     PositionalEncoder(cfg.FUSION.POS_ENC),
-            # )
             self.fusion.append(
                 AutoWeightedFeatureFusion(
                     c_in_m1=cfg.CHANNELS[level - self.n_levels],
                     c_in_m2=cfg.CHANNELS[level - self.n_levels],
-                    c_out=cfg.FUSION.OUT_DIM[level],
-                    ffn_hidden_dim=cfg.FUSION.DIM_FFN,
-                    dropout=cfg.FUSION.DROPOUT,
+                    c_out=self.out_dim[level],
                 )
             )
 
-        sem_head_in_dim = cfg.FUSION.OUT_DIM[-1]
+        sem_head_pcd_in_dim = cfg.CHANNELS[-1]
+        sem_head_img_in_dim = cfg.CHANNELS[-1]
+        sem_head_in_dim = self.out_dim[-1]
+        self.sem_head_pcd = nn.Linear(sem_head_pcd_in_dim, 20)
+        self.sem_head_img = nn.Linear(sem_head_img_in_dim, 20)
         self.sem_head = nn.Linear(sem_head_in_dim, 20)
 
     def forward(self, x):
-        pcd_feats, pcd_coords = self.mink(x)
-        img_feats, img_coords = self.cpe(x)
+        pcd_feats, pcd_coords = self.pcd_enc(x)
+        img_feats, img_coords = self.img_enc(x)
         pcd_feats, pcd_coords, pcd_pad_masks = self.pad_batch(pcd_coords, pcd_feats)
         img_feats, img_coords, img_pad_masks = self.pad_batch(img_coords, img_feats)
 
@@ -63,8 +62,6 @@ class FusionEncoder(nn.Module):
         coords = pcd_coords
         pad_masks = pcd_pad_masks
         for level in range(self.n_levels):
-            # mn_pos = self.pos_enc[level](mn_coords[level])
-            # ef_pos = self.pos_enc[level](ef_coords[level])
             feats.append(
                 self.fusion[level](
                     img_feats[level],
@@ -72,9 +69,20 @@ class FusionEncoder(nn.Module):
                 )
             )
 
-
+        pcd_logits = self.sem_head_pcd(pcd_feats[-1])
+        img_logits = self.sem_head_img(img_feats[-1])
         logits = self.sem_head(feats[-1])
-        return feats, coords, pad_masks, logits
+
+        return {
+            "feats": feats,
+            "img_feats": img_feats,
+            "pcd_feats": pcd_feats,
+            "logits": logits,
+            "pcd_logits": pcd_logits,
+            "img_logits": img_logits,
+            "coords": coords,
+            "pad_masks": pad_masks,
+        }
 
     def pad_batch(self, coors, feats):
         """
@@ -112,18 +120,12 @@ class FusionEncoder(nn.Module):
 
 
 class AutoWeightedFeatureFusion(nn.Module):
-    def __init__(self, c_in_m1, c_in_m2, c_out, ffn_hidden_dim=2048, dropout=0.0):
+    def __init__(self, c_in_m1, c_in_m2, c_out):
         super().__init__()
         c_in = c_in_m1 + c_in_m2
-        self.weights_generator = nn.Sequential(
-            # FFNLayer(c_in, dim_feedforward=ffn_hidden_dim, dropout=dropout),
-            MLP(c_in, c_in, 2, 3),
-        )
+        self.weights_generator = blocks.MLP(c_in, c_in, 2, 3)
         self.activation = torch.sigmoid
-        self.encoder = nn.Sequential(
-            MLP(c_in, c_in, c_out, 3),
-            # FFNLayer(c_out, dim_feedforward=ffn_hidden_dim, dropout=dropout),
-        )
+        self.encoder = blocks.MLP(c_in, c_in, c_out, 3)
 
     def forward(
             self,
@@ -145,26 +147,3 @@ class AutoWeightedFeatureFusion(nn.Module):
         fused_feats = self.encoder(fused_feats)
 
         return fused_feats
-
-
-# todo: implement queries_generator
-class FusionQueriesGenerator(nn.Module):
-    def __init__(self, num_queries, hidden_dim, num_heads, ffn_hidden_dim=2048, dropout=0.0):
-        super().__init__()
-        self.num_queries = num_queries
-
-        self.query_feat_m1 = nn.Embedding(num_queries, hidden_dim)
-        self.query_embed_m1 = nn.Embedding(num_queries, hidden_dim)
-
-        self.query_feat_m2 = nn.Embedding(num_queries, hidden_dim)
-        self.query_embed_m2 = nn.Embedding(num_queries, hidden_dim)
-
-        self.query_generator = MLP(2 * num_queries, 2 * num_queries, num_queries, 3)
-
-    def forward(
-            self,
-            feats_m1, coors_m1, pad_masks_m1,
-            feats_m2, coors_m2, pad_masks_m2,
-    ):
-        pass
-

@@ -181,7 +181,7 @@ class MinkEncoderDecoder(nn.Module):
         elif self.modality == "rgb" and self.input_dim == 3:
             feats = [f[:, -3:] for f in x["feats"]]
         elif self.modality == "uvdrgb" and self.input_dim == 6:
-            depth = [np.linalg.norm(f[:, :3], axis=1, keepdims=True) for f in x["feats"]]
+            depth = [np.linalg.norm(f[:, :2], axis=1, keepdims=True) for f in x["feats"]]
             feats = [np.concatenate([f[:, 4:6], d, f[:, -3:]], axis=1) for f, d in zip(x["feats"], depth)]
         else:
             raise Exception(

@@ -9,8 +9,8 @@ BACKBONE:
         FREEZE: True
     IMG:
         RESOLUTION: 0.1
-        INPUT_DIM: 3
-        MODALITY: rgb
+        INPUT_DIM: 5
+        MODALITY: uvrgb
         PRETRAINED: ckpt/fusion_pls_semkitti_mn_backbone.ckpt
         FREEZE: False
     FUSION:

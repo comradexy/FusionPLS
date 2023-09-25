@@ -25,24 +25,24 @@ class MaskPS(LightningModule):
         hparams.POS_ENC.FEAT_SIZE = hparams.DECODER.HIDDEN_DIM
         self.pos_enc = PositionalEncoder(hparams.POS_ENC)
 
-        hparams.AUX_DEC.HIDDEN_DIM = hparams.DECODER.HIDDEN_DIM
-        self.pcd_aux_decoder = MaskedTransformerDecoder(
-            self.backbone.pcd_out_dim,
-            hparams.AUX_DEC,
-            hparams.BACKBONE,
-            hparams[hparams.MODEL.DATASET],
-        )
-        self.img_aux_decoder = MaskedTransformerDecoder(
-            self.backbone.img_out_dim,
-            hparams.AUX_DEC,
-            hparams.BACKBONE,
-            hparams[hparams.MODEL.DATASET],
-        )
-        self.query_fusion = QueryFusionModule(
-            hparams.QUERY_FUSION,
-            hparams.DECODER,
-            hparams.AUX_DEC,
-        )
+        # hparams.AUX_DEC.HIDDEN_DIM = hparams.DECODER.HIDDEN_DIM
+        # self.pcd_aux_decoder = MaskedTransformerDecoder(
+        #     self.backbone.pcd_out_dim,
+        #     hparams.AUX_DEC,
+        #     hparams.BACKBONE,
+        #     hparams[hparams.MODEL.DATASET],
+        # )
+        # self.img_aux_decoder = MaskedTransformerDecoder(
+        #     self.backbone.img_out_dim,
+        #     hparams.AUX_DEC,
+        #     hparams.BACKBONE,
+        #     hparams[hparams.MODEL.DATASET],
+        # )
+        # self.query_fusion = QueryFusionModule(
+        #     hparams.QUERY_FUSION,
+        #     hparams.DECODER,
+        #     hparams.AUX_DEC,
+        # )
         self.decoder = MaskedTransformerDecoder(
             self.backbone.out_dim,
             hparams.DECODER,
@@ -64,37 +64,37 @@ class MaskPS(LightningModule):
 
         encoded_pos = [self.pos_enc(c) for c in bb_out["coords"]]
 
-        pcd_outputs, pcd_padding, pcd_queries = self.pcd_aux_decoder(
-            bb_out["pcd_feats"],
-            # bb_out["coords"],
-            encoded_pos,
-            bb_out["pad_masks"],
-        )
-        img_outputs, img_padding, img_queries = self.img_aux_decoder(
-            bb_out["img_feats"],
-            # bb_out["coords"],
-            encoded_pos,
-            bb_out["pad_masks"],
-        )
-        queries = self.query_fusion(img_queries, pcd_queries)
+        # pcd_outputs, pcd_padding, pcd_queries = self.pcd_aux_decoder(
+        #     bb_out["pcd_feats"],
+        #     # bb_out["coords"],
+        #     encoded_pos,
+        #     bb_out["pad_masks"],
+        # )
+        # img_outputs, img_padding, img_queries = self.img_aux_decoder(
+        #     bb_out["img_feats"],
+        #     # bb_out["coords"],
+        #     encoded_pos,
+        #     bb_out["pad_masks"],
+        # )
+        # queries = self.query_fusion(img_queries, pcd_queries)
 
         outputs, padding, last_queries = self.decoder(
             bb_out["feats"],
             # bb_out["coords"],
             encoded_pos,
             bb_out["pad_masks"],
-            queries,
+            # queries,
         )
 
         out = {
             "outputs": outputs,
             "padding": padding,
             "logits": bb_out["logits"],
-            "pcd_outputs": pcd_outputs,
-            "pcd_padding": pcd_padding,
+            # "pcd_outputs": pcd_outputs,
+            # "pcd_padding": pcd_padding,
             "pcd_logits": bb_out["pcd_logits"],
-            "img_outputs": img_outputs,
-            "img_padding": img_padding,
+            # "img_outputs": img_outputs,
+            # "img_padding": img_padding,
             "img_logits": bb_out["img_logits"],
         }
         # bb_logits = bb_out["logits"]
@@ -119,17 +119,18 @@ class MaskPS(LightningModule):
         out = self.forward(x)
         # loss_dict = self.getLoss(x, outputs, padding, bb_logits)
         loss_dict = self.getLoss(x, out["outputs"], out["padding"], out["logits"])
-        pcd_aux_loss_dict = self.getLoss(x, out["pcd_outputs"], out["pcd_padding"], out["pcd_logits"])
-        img_aux_loss_dict = self.getLoss(x, out["img_outputs"], out["img_padding"], out["img_logits"])
+        # pcd_aux_loss_dict = self.getLoss(x, out["pcd_outputs"], out["pcd_padding"], out["pcd_logits"])
+        # img_aux_loss_dict = self.getLoss(x, out["img_outputs"], out["img_padding"], out["img_logits"])
         for k, v in loss_dict.items():
             self.log(f"train/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
-        for k, v in pcd_aux_loss_dict.items():
-            self.log(f"train/pcd_aux/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
-        for k, v in img_aux_loss_dict.items():
-            self.log(f"train/img_aux/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
-        total_loss = sum(loss_dict.values()) + \
-                     sum(pcd_aux_loss_dict.values()) + \
-                     sum(img_aux_loss_dict.values())
+        # for k, v in pcd_aux_loss_dict.items():
+        #     self.log(f"train/pcd_aux/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
+        # for k, v in img_aux_loss_dict.items():
+        #     self.log(f"train/img_aux/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
+        total_loss = sum(loss_dict.values())
+        # total_loss = sum(loss_dict.values()) + \
+                     # sum(pcd_aux_loss_dict.values()) + \
+                     # sum(img_aux_loss_dict.values())
         self.log("train_loss", total_loss, batch_size=self.cfg.TRAIN.BATCH_SIZE)
         torch.cuda.empty_cache()
 
@@ -143,17 +144,18 @@ class MaskPS(LightningModule):
         out = self.forward(x)
         # loss_dict = self.getLoss(x, outputs, padding, bb_logits)
         loss_dict = self.getLoss(x, out["outputs"], out["padding"], out["logits"])
-        pcd_aux_loss_dict = self.getLoss(x, out["pcd_outputs"], out["pcd_padding"], out["pcd_logits"])
-        img_aux_loss_dict = self.getLoss(x, out["img_outputs"], out["img_padding"], out["img_logits"])
+        # pcd_aux_loss_dict = self.getLoss(x, out["pcd_outputs"], out["pcd_padding"], out["pcd_logits"])
+        # img_aux_loss_dict = self.getLoss(x, out["img_outputs"], out["img_padding"], out["img_logits"])
         for k, v in loss_dict.items():
             self.log(f"val/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
-        for k, v in pcd_aux_loss_dict.items():
-            self.log(f"train/pcd_aux/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
-        for k, v in img_aux_loss_dict.items():
-            self.log(f"train/img_aux/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
-        total_loss = sum(loss_dict.values()) + \
-                     sum(pcd_aux_loss_dict.values()) + \
-                     sum(img_aux_loss_dict.values())
+        # for k, v in pcd_aux_loss_dict.items():
+        #     self.log(f"train/pcd_aux/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
+        # for k, v in img_aux_loss_dict.items():
+        #     self.log(f"train/img_aux/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
+        total_loss = sum(loss_dict.values())
+        # total_loss = sum(loss_dict.values()) + \
+        #              sum(pcd_aux_loss_dict.values()) + \
+        #              sum(img_aux_loss_dict.values())
         self.log("val_loss", total_loss, batch_size=self.cfg.TRAIN.BATCH_SIZE)
 
         # sem_pred, ins_pred = self.panoptic_inference(outputs, padding)

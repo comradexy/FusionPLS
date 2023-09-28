@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
@@ -34,12 +35,19 @@ class FusionEncoder(nn.Module):
             self.out_dim = [cfg.FUSION.OUT_DIM] * self.n_levels
         self.pcd_out_dim = cfg.PCD.CHANNELS[-self.n_levels:]
         self.img_out_dim = cfg.IMG.CHANNELS[-self.n_levels:]
+        self.feats_proj = nn.ModuleList()
         self.fusion = nn.ModuleList()
         for level in range(self.n_levels):
+            self.feats_proj.append(
+                nn.Linear(
+                    cfg.CHANNELS[level - self.n_levels],
+                    self.out_dim[level],
+                )
+            )
             self.fusion.append(
                 AutoWeightedFeatureFusion(
-                    c_in_m1=cfg.CHANNELS[level - self.n_levels],
-                    c_in_m2=cfg.CHANNELS[level - self.n_levels],
+                    c_in_m1=self.out_dim[level],
+                    c_in_m2=self.out_dim[level],
                     c_out=self.out_dim[level],
                 )
             )
@@ -52,23 +60,57 @@ class FusionEncoder(nn.Module):
         self.sem_head = nn.Linear(sem_head_in_dim, 20)
 
     def forward(self, x):
-        pcd_feats, pcd_coords = self.pcd_enc(x)
-        img_feats, img_coords = self.img_enc(x)
-        pcd_feats, pcd_coords, pcd_pad_masks = self.pad_batch(pcd_coords, pcd_feats)
-        img_feats, img_coords, img_pad_masks = self.pad_batch(img_coords, img_feats)
+        camera_fov_mask = [torch.from_numpy(ind).bool().cuda() for ind in x["uvrgb_ind"]]
+        pcd_feats, coords = self.pcd_enc(x)
+        img_feats, _ = self.img_enc(x)
+
+        # project feats to out_dim
+        pcd_feats = [
+            [
+                self.feats_proj[l](batch)
+                for batch in pcd_feats[l]
+            ]
+            for l in range(self.n_levels)
+        ]
+        img_feats = [
+            [
+                self.feats_proj[l](batch)
+                for batch in img_feats[l]
+            ]
+            for l in range(self.n_levels)
+        ]
+
+        pcd_feats_cf = [
+            [
+                batch[mask]
+                for batch, mask in zip(pcd_feats[l], camera_fov_mask)
+            ]
+            for l in range(self.n_levels)
+        ]
+        pcd_feats_cf, _, pad_masks_cf = self.pad_batch(coords, pcd_feats_cf)
+        img_feats, _, _ = self.pad_batch(coords, img_feats)
 
         # auto-weighted feature fusion
-        feats = []
-        coords = pcd_coords
-        pad_masks = pcd_pad_masks
-        for level in range(self.n_levels):
-            feats.append(
-                self.fusion[level](
-                    img_feats[level],
-                    pcd_feats[level],
-                )
+        fused_feats = []
+        for l in range(self.n_levels):
+            feats_cf = self.fusion[l](
+                img_feats[l],
+                pcd_feats_cf[l],
+            )
+            # unbatch
+            fused_feats.append(
+                [
+                    batch[~mask]
+                    for batch, mask in zip(feats_cf, pad_masks_cf[l])
+                ]
             )
 
+        # replace pcd_feats in camera fov with fused_feats
+        for l in range(self.n_levels):
+            for pf, ff, mask in zip(pcd_feats[l], fused_feats[l], camera_fov_mask):
+                pf[mask] = ff
+
+        feats, coords, pad_masks = self.pad_batch(coords, pcd_feats)
         # pcd_logits = self.sem_head_pcd(pcd_feats[-1])
         # img_logits = self.sem_head_img(img_feats[-1])
         logits = self.sem_head(feats[-1])

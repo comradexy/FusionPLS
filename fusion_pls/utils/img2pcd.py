@@ -41,7 +41,7 @@ def feats_proj_img2pcd(pts, img, Trv2c, P2):
         u, v = pt
         u = min(max(u, 0), img.shape[1] - 1)
         v = min(max(v, 0), img.shape[0] - 1)
-        rgb = image.getpixel((u, v))
+        rgb = np.array(image.getpixel((u, v))) / 255.0
         coord = np.array([u, v])
         img_feats.append(np.concatenate([coord, rgb]))
     img_feats = np.array(img_feats).reshape(-1, 5)
@@ -451,7 +451,7 @@ def img_feat_proj(coords, feats, image, calib):
         list(img_size),
     )
     feats_uvrgb = feats_proj_img2pcd(
-        coords,
+        coords[indices],
         image,
         Tr,
         P2,

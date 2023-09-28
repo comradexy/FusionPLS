@@ -37,7 +37,7 @@ KITTI:
     SPACE: # coord limits
         [[-48.0,48.0],[-48.0,48.0],[-4.0,1.5]]
     SUB_NUM_POINTS: 80000
-    IMAGE: False  # whether to load image_2
+    IMAGE: True  # whether to load image_2
 
 NUSCENES:
     PATH: data/nuscenes
@@ -48,4 +48,4 @@ NUSCENES:
     SPACE: # coord limits
         [[-50.0,50.0],[-50.0,50.0],[-5.0,3]]
     SUB_NUM_POINTS: 50000
-    IMAGE: False  # whether to load image_2
+    IMAGE: True  # whether to load image_2

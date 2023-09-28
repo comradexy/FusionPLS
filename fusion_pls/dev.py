@@ -119,43 +119,46 @@ def TensorField(x, res):
 
 
 if __name__ == '__main__':
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # # print(device)
-    # model_cfg = edict(
-    #     yaml.safe_load(open(join(getDir(__file__), "./config/model.yaml")))
-    # )
-    # backbone_cfg = edict(
-    #     yaml.safe_load(open(join(getDir(__file__), "./config/backbone.yaml")))
-    # )
-    # decoder_cfg = edict(
-    #     yaml.safe_load(open(join(getDir(__file__), "./config/decoder.yaml")))
-    # )
-    # cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
-    # cfg.TRAIN.BATCH_SIZE = 1
-    #
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # print(device)
+    model_cfg = edict(
+        yaml.safe_load(open(join(getDir(__file__), "./config/model.yaml")))
+    )
+    backbone_cfg = edict(
+        yaml.safe_load(open(join(getDir(__file__), "./config/backbone.yaml")))
+    )
+    decoder_cfg = edict(
+        yaml.safe_load(open(join(getDir(__file__), "./config/decoder.yaml")))
+    )
+    cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
+    cfg.TRAIN.BATCH_SIZE = 1
+
     # # backbone = FusionEncoder(cfg.BACKBONE, cfg[cfg.MODEL.DATASET])
     # # backbone = backbone.to(device)
     #
     # # cpe = ColorPointEncoder(cfg.BACKBONE.CPE, cfg[cfg.MODEL.DATASET])
     # # cpe = cpe.to(device)
     #
-    # # model = MaskPS(cfg)
-    # # model.to(device)
-    # cfg.KITTI.PATH = '/data/dxy/SemanticKittiF/dataset'
-    # data = SemanticDatasetModule(cfg)
-    # data.setup()
-    # # 获取test DataLoader
-    # test_loader = data.train_dataloader()
-    # # 从DataLoader中获取迭代器
-    # test_iter = iter(test_loader)
-    # # # 通过迭代器遍历所有样本
-    # # for i in tqdm(test_iter, desc='Vist dataloader'):
-    # #     pass
-    #
-    # sample = next(test_iter)
-    #
-    # print(f"pts_feats: {sample['feats'][0].shape}")
-    # print(f"pts_coord: {sample['pt_coord'][0].shape}")
+    model = MaskPS(cfg)
+    model.to(device)
+    cfg.KITTI.PATH = '/data/dxy/SemanticKITTI/dataset'
+    data = SemanticDatasetModule(cfg)
+    data.setup()
+    # 获取test DataLoader
+    test_loader = data.train_dataloader()
+    # 从DataLoader中获取迭代器
+    test_iter = iter(test_loader)
+    # # 通过迭代器遍历所有样本
+    # for i in tqdm(test_iter, desc='Vist dataloader'):
+    #     pass
+
+    sample = next(test_iter)
+    # print(sample.keys())
+    # print(f"feats: {sample['feats'][0].shape}")
+    # print(f"uvrgb: {sample['uvrgb'][0].shape}")
+    # print(f"uvrgb_ind: {sample['uvrgb_ind'][0].shape}")
+    # print(f"uvrgb_ind_len_true: {sample['uvrgb_ind'][0].sum()}")
+    model(sample)
     # tf = TensorField(sample, 0.1)
     # st = tf.sparse()
     # coords = st.C.float()
@@ -164,10 +167,3 @@ if __name__ == '__main__':
     #     "coords and feats should be torch.Tensor"
     # print(f"vox_feats: {feats.shape}")
     # print(f"vox_coords: {coords.shape}")
-
-    img_path = '/data/dxy/SemanticKittiF/dataset/sequences/00/image_2/000000.png'
-    img = Image.open(img_path)
-    print(f"img_size_PIL: {img.size[::-1]}")
-    img = np.array(img)
-    print(f"img_size_np: {img.shape[0:2]}")
-    print(imagesize.get(img_path)[::-1])

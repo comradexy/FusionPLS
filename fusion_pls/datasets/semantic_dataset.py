@@ -6,6 +6,7 @@ import yaml
 from PIL import Image
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
+from fusion_pls.utils.img2pcd import img_feat_proj
 
 
 class SemanticDatasetModule(LightningDataModule):
@@ -50,13 +51,11 @@ class SemanticDatasetModule(LightningDataModule):
 
         test_set = SemanticDataset(
             cfg=self.cfg,
-            # split="test",
-            split="valid",
+            split="test",
         )
         self.test_mask_set = MaskSemanticDataset(
             dataset=test_set,
-            # split="test",
-            split="valid",
+            split="test",
             min_pts=self.cfg[self.cfg.MODEL.DATASET].MIN_POINTS,
             space=self.cfg[self.cfg.MODEL.DATASET].SPACE,
         )
@@ -175,19 +174,24 @@ class SemanticDataset(Dataset):
         fname = self.im_idx[index]
         pose = self.poses[index]
         calib = self.calibs[index]
-        # points feats: xyziuvrgb
+
+        # points feats: xyzi
         points = np.memmap(
-            # self.im_idx[index].replace("velodyne", "velodyne_fov_multi")[:-3] + "bin",
             self.im_idx[index],
             dtype=np.float32,
             mode="r",
-        # ).reshape((-1, 7))
-        ).reshape((-1, 9))
+        ).reshape((-1, 4))
         xyz = points[:, :3]
         intensity = points[:, 3]
-        uv = points[:, 4:6]
-        # rgb = points[:, 6:9] / 255.0
-        rgb = points[:, -3:] / 255.0
+
+        if self.cfg[self.dataset].IMAGE:
+            image = Image.open(
+                self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png"
+            )
+            image = np.array(image)
+        else:
+            image = np.array([])
+
         if len(intensity.shape) == 2:
             intensity = np.squeeze(intensity)
         token = "0"
@@ -209,17 +213,10 @@ class SemanticDataset(Dataset):
             ins_labels = annotated_data >> 16
             sem_labels = np.vectorize(self.learning_map.__getitem__)(sem_labels)
             # TODO: add bbox labels
-        if self.cfg[self.dataset].IMAGE:
-            image = Image.open(self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png")
-            image = np.array(image)
-        else:
-            image = np.array([])
 
         return (
             xyz,
             intensity,
-            uv,
-            rgb,
             image,
             sem_labels,
             ins_labels,
@@ -259,8 +256,7 @@ class MaskSemanticDataset(Dataset):
         empty = True
         while empty:
             data = self.dataset[index]
-            xyz, intensity, uv, rgb, image, sem_labels, ins_labels, fname, calib, pose, token = data
-            # xyz, intensity, rgb, image, sem_labels, ins_labels, fname, calib, pose, token = data
+            xyz, intensity, image, sem_labels, ins_labels, fname, calib, pose, token = data
             keep = np.argwhere(
                 (self.xlim[0] < xyz[:, 0])
                 & (xyz[:, 0] < self.xlim[1])
@@ -271,8 +267,6 @@ class MaskSemanticDataset(Dataset):
             )[:, 0]
             xyz = xyz[keep]
             intensity = intensity[keep]
-            uv = uv[keep]
-            rgb = rgb[keep]
             sem_labels = sem_labels[keep]
             ins_labels = ins_labels[keep]
 
@@ -291,17 +285,17 @@ class MaskSemanticDataset(Dataset):
             (
                 xyz.reshape(-1, 3),
                 intensity.reshape(-1, 1),
-                uv.reshape(-1, 2),
-                rgb.reshape(-1, 3)
             ),
-            axis=1
+            axis=1,
         )
 
         if self.split == "test":
+            uvrgb, uvrgb_ind = img_feat_proj(xyz, feats, image, calib)
             return (
-                xyz,
+                # xyz,
                 feats,
-                image,
+                uvrgb,
+                uvrgb_ind,
                 sem_labels,
                 ins_labels,
                 torch.tensor([]),
@@ -320,6 +314,10 @@ class MaskSemanticDataset(Dataset):
             feats = feats[idx]
             sem_labels = sem_labels[idx]
             ins_labels = ins_labels[idx]
+            uvrgb, uvrgb_ind = img_feat_proj(xyz, feats, image, calib)
+
+        if self.split == "valid":
+            uvrgb, uvrgb_ind = img_feat_proj(xyz, feats, image, calib)
 
         stuff_masks = np.array([]).reshape(0, xyz.shape[0])
         stuff_masks_ids = []
@@ -383,9 +381,10 @@ class MaskSemanticDataset(Dataset):
             feats = pcd_augmentations(feats)
 
         return (
-            xyz,  # original points coordinates
+            # xyz,  # original points coordinates
             feats,  # augmented coordinates and pcd features
-            image,  # RGB image
+            uvrgb,
+            uvrgb_ind,
             sem_labels,
             ins_labels,
             masks,
@@ -401,9 +400,10 @@ class MaskSemanticDataset(Dataset):
 class BatchCollation:
     def __init__(self):
         self.keys = [
-            "pt_coord",
+            # "pt_coord",
             "feats",
-            "image",
+            "uvrgb",
+            "uvrgb_ind",
             "sem_label",
             "ins_label",
             "masks",

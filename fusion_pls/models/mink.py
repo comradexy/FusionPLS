@@ -171,23 +171,21 @@ class MinkEncoderDecoder(nn.Module):
         The coordinates are quantized using the provided resolution
         """
         if self.modality == "xyzi" and self.input_dim == 4:
-            feats = [f[:, :4] for f in x["feats"]]
-        elif self.modality == "xyziuvrgb" and self.input_dim == 9:
             feats = x["feats"]
-        elif self.modality == "xyzrgb" and self.input_dim == 6:
-            feats = [f[:, [0, 1, 2, 6, 7, 8]] for f in x["feats"]]
+            coords = [f[:, :3] for f in x["feats"]]
         elif self.modality == "uvrgb" and self.input_dim == 5:
-            feats = [f[:, -5:] for f in x["feats"]]
+            feats = x["uvrgb"]
+            coords = [f[ind][:, :3] for f, ind in zip(x["feats"], x["uvrgb_ind"])]
         elif self.modality == "rgb" and self.input_dim == 3:
-            feats = [f[:, -3:] for f in x["feats"]]
-        elif self.modality == "uvdrgb" and self.input_dim == 6:
-            depth = [np.linalg.norm(f[:, :2], axis=1, keepdims=True) for f in x["feats"]]
-            feats = [np.concatenate([f[:, 4:6], d, f[:, -3:]], axis=1) for f, d in zip(x["feats"], depth)]
+            feats = [f[:, -3:] for f in x["uvrgb"]]
+            coords = [f[ind][:, :3] for f, ind in zip(x["feats"], x["uvrgb_ind"])]
+        # elif self.modality == "uvdrgb" and self.input_dim == 6:
+        #     depth = [np.linalg.norm(f[:, :2], axis=1, keepdims=True) for f in x["feats"]]
+        #     feats = [np.concatenate([f[:, 4:6], d, f[:, -3:]], axis=1) for f, d in zip(x["feats"], depth)]
         else:
             raise Exception(
                 f"modality '{self.modality}' with input_dim {self.input_dim} not supported"
             )
-        coords = [f[:, :3] for f in x["feats"]]
         # get batched features
         features = torch.from_numpy(np.concatenate(feats, 0)).float()
         # get batched coordinates

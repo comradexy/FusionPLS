@@ -6,7 +6,7 @@ from torch import nn
 
 
 class MaskedTransformerDecoder(nn.Module):
-    def __init__(self, in_channels, cfg, bb_cfg, data_cfg):
+    def __init__(self, in_channels, cfg, data_cfg):
         super().__init__()
         self.hidden_dim = cfg.HIDDEN_DIM
 
@@ -175,105 +175,76 @@ class MaskedTransformerDecoder(nn.Module):
         ]
 
 
-class QueryFusionModule(nn.Module):
-    def __init__(self, cfg, dec_cfg, aux_dec_cfg):
-        """
-        Args:
-            num_queries_m1: int, number of queries from modality 1
-            num_queries_m2: int, number of queries from modality 2
-            num_queries_out: int, number of queries to output
-            hidden_dim: int, hidden dimension of the MLP
-        """
+# TODO: implement detection decoder
+class DetectionTransformer(nn.Module):
+    def __init__(self, in_channels, cfg, data_cfg):
         super().__init__()
-        self.num_queries_m1 = aux_dec_cfg.NUM_QUERIES
-        self.num_queries_m2 = aux_dec_cfg.NUM_QUERIES
-        self.num_queries_out = dec_cfg.NUM_QUERIES
-        self.hidden_dim = dec_cfg.HIDDEN_DIM
-        self.num_blocks = cfg.BLOCKS
+        self.num_queries = cfg.NUM_QUERIES
+        self.hidden_dim = cfg.HIDDEN_DIM
+        self.nheads = cfg.NHEADS
+        self.layer_norm = nn.LayerNorm(self.hidden_dim)
+        self.self_attention_layer = blocks.SelfAttentionLayer(
+            d_model=self.hidden_dim, nhead=self.nheads, dropout=0.0
+        )
+        self.cross_attention_layer = blocks.CrossAttentionLayer(
+            d_model=self.hidden_dim, nhead=self.nheads, dropout=0.0
+        )
+        self.ffn_layer = blocks.FFNLayer(
+            d_model=self.hidden_dim, dim_feedforward=cfg.DIM_FFN, dropout=0.0
+        )
 
-        # self.query_generator = blocks.MLP(
-        #     self.num_queries_m1 + self.num_queries_m2,
-        #     self.num_queries_m1 + self.num_queries_m2,
-        #     self.num_queries_out,
-        #     3,
-        # )
+        self.mask_feat_proj = nn.Sequential()
+        if in_channels != self.hidden_dim:
+            self.mask_feat_proj = nn.Linear(in_channels, self.hidden_dim)
 
-        self.ffn_layers = nn.ModuleList()
-        self.self_attention_layers = nn.ModuleList()
-        # self.cross_attention_layers_m1_to_m2 = nn.ModuleList()
-        # self.cross_attention_layers_m2_to_m1 = nn.ModuleList()
-        self.mlp_layers = nn.ModuleList()
-        for _ in range(self.num_blocks):
-            self.self_attention_layers.append(
-                blocks.SelfAttentionLayer(
-                    d_model=self.hidden_dim, nhead=cfg.NHEADS, dropout=cfg.DROPOUT
-                )
-            )
-
-            # self.cross_attention_layers_m1_to_m2.append(
-            #     blocks.CrossAttentionLayer(
-            #         d_model=self.hidden_dim, nhead=cfg.NHEADS, dropout=cfg.DROPOUT
-            #     )
-            # )
-            # self.cross_attention_layers_m2_to_m1.append(
-            #     blocks.CrossAttentionLayer(
-            #         d_model=self.hidden_dim, nhead=cfg.NHEADS, dropout=cfg.DROPOUT
-            #     )
-            # )
-            self.mlp_layers.append(
-                blocks.MLP(
-                    self.num_queries_m1 + self.num_queries_m2,
-                    self.num_queries_m1 + self.num_queries_m2,
-                    self.num_queries_out,
-                    3,
-                )
-            )
+        # output FFNs
+        self.cls_pred_head = blocks.MLP(
+            self.hidden_dim,
+            self.hidden_dim,
+            data_cfg.NUM_CLASSES + 1,
+            3,
+        )
+        self.bbox_pred_head = blocks.MLP(
+            self.hidden_dim,
+            self.hidden_dim,
+            7,  # (x,y,z,w,l,h,rot)
+            3,
+        )
 
     def forward(
             self,
-            queries_m1,
-            queries_m2,
+            queries,
+            bb_feat,
+            pos,
+            pad_mask,
+            attn_mask=None,
+            query_pos=None,
     ):
-        """
-        Args:
-            queries_m1: Tensor of shape [batch_size, num_queries_m1, hidden_dim]
-            queries_m2: Tensor of shape [batch_size, num_queries_m2, hidden_dim]
-        """
-        assert queries_m1.shape[2] == self.hidden_dim and queries_m2.shape[2] == self.hidden_dim, \
-            f"Expect hidden_dim: {self.hidden_dim}," \
-            f"but get queries_m1: {queries_m1.shape[2]}, queries_m2: {queries_m2.shape[2]}"
+        bb_feat = self.mask_feat_proj(bb_feat) + pos
 
-        # # concatenate queries_m1 and queries_m2 along the num_queries dimension
-        # queries = torch.cat([queries_m1, queries_m2], dim=1)
-        # # permute to [batch_size, hidden_dim, num_queries]
-        # queries = queries.permute(0, 2, 1)
-        # # fuse queries_m1 and queries_m2
-        # queries = self.query_generator(queries)
-        # # permute to [batch_size, num_queries, hidden_dim]
-        # queries = queries.permute(0, 2, 1)
+        if attn_mask is not None:
+            attn_mask[torch.where(attn_mask.sum(-1) == attn_mask.shape[-1])] = False
+        # cross-attention
+        queries = self.cross_attention_layer(
+            queries,
+            bb_feat,
+            attn_mask=attn_mask,
+            padding_mask=pad_mask,
+            pos=pos,
+            query_pos=query_pos,
+        )
+        # self-attention
+        queries = self.self_attention_layer(
+            queries,
+            query_pos=query_pos,
+        )
+        # FFN
+        queries = self.ffn_layer(queries)
 
-        queries = torch.cat([queries_m1, queries_m2], dim=1)
-        for i in range(self.num_blocks):
-            queries = self.self_attention_layers[i](q_embed=queries)
+        # get predictions
+        output = self.layer_norm(queries)
+        pred_cls = self.cls_pred_head(output)
+        pred_bboxes = self.bbox_pred_head(output)
 
-            # # cross-attention
-            # queries_m1_to_m2 = self.cross_attention_layers_m1_to_m2[i](
-            #     q_embed=queries_m1,
-            #     bb_feat=queries_m2,
-            # )
-            # queries_m2_to_m1 = self.cross_attention_layers_m2_to_m1[i](
-            #     q_embed=queries_m2,
-            #     bb_feat=queries_m1,
-            # )
+        return pred_cls, pred_bboxes
 
-            # MLP
-            # # concatenate queries along the num_queries dimension
-            # queries = torch.cat([queries_m1_to_m2, queries_m2_to_m1], dim=1)
-            # permute to [batch_size, hidden_dim, num_queries]
-            queries = queries.permute(0, 2, 1)
-            # fuse queries
-            queries = self.mlp_layers[i](queries)
-            # permute to [batch_size, num_queries, hidden_dim]
-            queries = queries.permute(0, 2, 1)
-
-        return queries

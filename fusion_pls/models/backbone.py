@@ -69,8 +69,8 @@ class FusionEncoder(nn.Module):
                 )
             )
 
-        pcd_logits = self.sem_head_pcd(pcd_feats[-1])
-        img_logits = self.sem_head_img(img_feats[-1])
+        # pcd_logits = self.sem_head_pcd(pcd_feats[-1])
+        # img_logits = self.sem_head_img(img_feats[-1])
         logits = self.sem_head(feats[-1])
 
         return {
@@ -78,8 +78,8 @@ class FusionEncoder(nn.Module):
             "img_feats": img_feats,
             "pcd_feats": pcd_feats,
             "logits": logits,
-            "pcd_logits": pcd_logits,
-            "img_logits": img_logits,
+            # "pcd_logits": pcd_logits,
+            # "img_logits": img_logits,
             "coords": coords,
             "pad_masks": pad_masks,
         }

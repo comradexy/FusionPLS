@@ -2,7 +2,7 @@ import fusion_pls.utils.testing as testing
 import MinkowskiEngine as ME
 import torch
 import torch.nn.functional as F
-from fusion_pls.models.decoder import MaskedTransformerDecoder, QueryFusionModule
+from fusion_pls.models.decoder import MaskedTransformerDecoder, DetectionTransformer
 from fusion_pls.models.positional_encoder import PositionalEncoder
 from fusion_pls.models.loss import MaskLoss, SemLoss
 from fusion_pls.models.mink import MinkEncoderDecoder
@@ -46,7 +46,6 @@ class MaskPS(LightningModule):
         self.decoder = MaskedTransformerDecoder(
             self.backbone.out_dim,
             hparams.DECODER,
-            hparams.BACKBONE,
             hparams[hparams.MODEL.DATASET],
         )
 
@@ -92,10 +91,10 @@ class MaskPS(LightningModule):
             "logits": bb_out["logits"],
             # "pcd_outputs": pcd_outputs,
             # "pcd_padding": pcd_padding,
-            "pcd_logits": bb_out["pcd_logits"],
+            # "pcd_logits": bb_out["pcd_logits"],
             # "img_outputs": img_outputs,
             # "img_padding": img_padding,
-            "img_logits": bb_out["img_logits"],
+            # "img_logits": bb_out["img_logits"],
         }
         # bb_logits = bb_out["logits"]
         # return outputs, padding, bb_logits

@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import imagesize
 from PIL import Image
 from tqdm import tqdm
 from easydict import EasyDict as edict
@@ -164,7 +165,9 @@ if __name__ == '__main__':
     # print(f"vox_feats: {feats.shape}")
     # print(f"vox_coords: {coords.shape}")
 
-    query = nn.Embedding(3, 4)
-    query_embed = nn.Embedding(3, 4)
-    print(query.weight)
-    print(query_embed.weight)
+    img_path = '/data/dxy/SemanticKittiF/dataset/sequences/00/image_2/000000.png'
+    img = Image.open(img_path)
+    print(f"img_size_PIL: {img.size[::-1]}")
+    img = np.array(img)
+    print(f"img_size_np: {img.shape[0:2]}")
+    print(imagesize.get(img_path)[::-1])

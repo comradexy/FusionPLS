@@ -208,6 +208,7 @@ class SemanticDataset(Dataset):
             sem_labels = annotated_data & 0xFFFF
             ins_labels = annotated_data >> 16
             sem_labels = np.vectorize(self.learning_map.__getitem__)(sem_labels)
+            # TODO: add bbox labels
         if self.cfg[self.dataset].IMAGE:
             image = Image.open(self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png")
             image = np.array(image)
@@ -383,14 +384,14 @@ class MaskSemanticDataset(Dataset):
 
         return (
             xyz,  # original points coordinates
-            feats,  # augmented coordinates and other features
+            feats,  # augmented coordinates and pcd features
             image,  # RGB image
-            sem_labels,  # semantic labels in camera fov
-            ins_labels,  # instance labels in camera fov
+            sem_labels,
+            ins_labels,
             masks,
             masks_cls,
             masks_ids,
-            fname,  # file path of original point cloud
+            fname,  # file path of pcd
             calib,
             pose,
             token,

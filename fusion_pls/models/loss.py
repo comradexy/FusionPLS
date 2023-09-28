@@ -97,7 +97,7 @@ class MaskLoss(nn.Module):
         return losses
 
     def get_losses(
-        self, outputs, targets, indices, num_masks, masks_ids, coors, do_cls=True
+            self, outputs, targets, indices, num_masks, masks_ids, coors, do_cls=True
     ):
         if do_cls:
             classes = self.loss_classes(outputs, targets, indices)
@@ -157,10 +157,10 @@ class MaskLoss(nn.Module):
             n_masks.insert(0, 0)
             nm = torch.cumsum(torch.tensor(n_masks), 0)
             point_labels = torch.cat(
-                [target_masks[nm[i] : nm[i + 1]][:, p] for i, p in enumerate(idx)]
+                [target_masks[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
             )
         point_logits = torch.cat(
-            [pred_masks[nm[i] : nm[i + 1]][:, p] for i, p in enumerate(idx)]
+            [pred_masks[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
         )
 
         del pred_masks
@@ -236,6 +236,7 @@ def sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: floa
 
 
 sigmoid_ce_loss_jit = torch.jit.script(sigmoid_ce_loss)  # type: torch.jit.ScriptModule
+
 
 ################################################################################
 
@@ -351,3 +352,132 @@ class SemLoss(nn.Module):
         if n == 1:
             return acc
         return acc / n
+
+
+# TODO: implement detection loss
+class DetLoss(nn.Module):
+    """This class computes the loss for DETR.
+        The process happens in two steps:
+            1) we compute hungarian assignment between ground truth boxes and the outputs of the model
+            2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
+        """
+
+    def __init__(self, cfg, data_cfg):
+        """Create the criterion.
+        Parameters:
+            num_classes: number of object categories
+            matcher: module able to compute a matching between targets and proposals
+            weight_dict: dict containing as key the names of the losses and as values their relative weight.
+            eos_coef: relative classification weight applied to the no-object category
+            losses: list of all the losses to be applied. See get_loss for list of available losses.
+        """
+        super().__init__()
+        self.num_classes = data_cfg.NUM_CLASSES
+        self.ignore = data_cfg.IGNORE_LABEL
+        # TODO: implement matcher
+        self.matcher = HungarianMatcher(cfg.WEIGHTS, cfg.P_RATIO)
+
+        self.weight_dict = {
+            cfg.WEIGHTS_KEYS[i]: cfg.WEIGHTS[i] for i in range(len(cfg.WEIGHTS))
+        }
+
+        self.eos_coef = cfg.EOS_COEF
+
+        weights = torch.ones(self.num_classes + 1)
+        weights[0] = 0.0
+        weights[-1] = self.eos_coef
+        self.weights = weights
+
+    def forward(self, outputs, targets):
+        losses = {}
+        # Compute the average number of target boxes across all nodes, for normalization purposes
+        num_boxes = sum(len(t) for t in targets["boxes"])
+        num_boxes = torch.as_tensor(
+            [num_boxes], dtype=torch.float, device=next(iter(outputs.values())).device
+        )
+        if is_dist_avail_and_initialized():
+            torch.distributed.all_reduce(num_boxes)
+        num_boxes = torch.clamp(num_boxes / get_world_size(), min=1).item()
+
+        outputs_no_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
+
+        # Retrieve the matching between the outputs of the last layer and the targets
+        indices = self.matcher(outputs_no_aux, targets)
+
+        losses.update(
+            self.get_losses(outputs, targets, indices, num_boxes)
+        )
+        # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
+        if "aux_outputs" in outputs:
+            for i, aux_outputs in enumerate(outputs["aux_outputs"]):
+                indices = self.matcher(aux_outputs, targets)
+                l_dict = self.get_losses(
+                    aux_outputs, targets, indices, num_boxes
+                )
+                l_dict = {f"{i}_" + k: v for k, v in l_dict.items()}
+                losses.update(l_dict)
+
+        losses = {
+            l: losses[l] * self.weight_dict[k]
+            for l in losses
+            for k in self.weight_dict
+            if k in l
+        }
+
+        return losses
+
+    def get_losses(self, outputs, targets, indices, num_boxes):
+        classes = self.loss_classes(outputs, targets, indices)
+        boxes = self.loss_boxes(outputs, targets, indices)
+        classes.update(boxes)
+        return classes
+
+    def loss_classes(self, outputs, targets, indices):
+        assert "pred_logits" in outputs
+        pred_logits = outputs["pred_logits"]
+
+        idx = self._get_pred_permutation_idx(indices)
+
+        target_classes_o = torch.cat(
+            [t[J] for t, (_, J) in zip(targets["classes"], indices)]
+        ).to(pred_logits.device)
+
+        target_classes = torch.full(
+            pred_logits.shape[:2],
+            self.num_classes,  # fill with class no_obj
+            dtype=torch.int64,
+            device=pred_logits.device,
+        )
+        target_classes[idx] = target_classes_o
+
+        loss_ce = F.cross_entropy(
+            pred_logits.transpose(1, 2),
+            target_classes,
+            self.weights.to(pred_logits),
+            ignore_index=self.ignore,
+        )
+        losses = {"loss_ce": loss_ce}
+        return losses
+
+    def loss_boxes(self, outputs, targets, indices):
+        assert "pred_boxes" in outputs
+        pred_boxes = outputs["pred_boxes"]
+        idx = self._get_pred_permutation_idx(indices)
+        target_boxes = torch.cat([t[i] for t, (_, i) in zip(targets["boxes"], indices)])
+
+        num_boxes = target_boxes.shape[0]
+        loss_bbox = F.smooth_l1_loss(
+            pred_boxes[idx],
+            target_boxes,
+            reduction="none",
+        ).sum() / num_boxes  # Normalize by the number of boxes
+        losses = {"loss_bbox": loss_bbox}
+        return losses
+
+    def _get_pred_permutation_idx(self, indices):
+        # permute predictions following indices
+        batch_idx = torch.cat(
+            [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
+        )
+        src_idx = torch.cat([src for (src, _) in indices])
+        return batch_idx, src_idx

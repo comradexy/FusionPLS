@@ -292,7 +292,7 @@ class MaskSemanticDataset(Dataset):
         if self.split == "test":
             uvrgb, uvrgb_ind = img_feat_proj(xyz, feats, image, calib)
             return (
-                # xyz,
+                xyz,
                 feats,
                 uvrgb,
                 uvrgb_ind,
@@ -314,10 +314,8 @@ class MaskSemanticDataset(Dataset):
             feats = feats[idx]
             sem_labels = sem_labels[idx]
             ins_labels = ins_labels[idx]
-            uvrgb, uvrgb_ind = img_feat_proj(xyz, feats, image, calib)
 
-        if self.split == "valid":
-            uvrgb, uvrgb_ind = img_feat_proj(xyz, feats, image, calib)
+        uvrgb, uvrgb_ind = img_feat_proj(xyz, feats, image, calib)
 
         stuff_masks = np.array([]).reshape(0, xyz.shape[0])
         stuff_masks_ids = []
@@ -381,7 +379,7 @@ class MaskSemanticDataset(Dataset):
             feats = pcd_augmentations(feats)
 
         return (
-            # xyz,  # original points coordinates
+            xyz,  # original points coordinates
             feats,  # augmented coordinates and pcd features
             uvrgb,
             uvrgb_ind,
@@ -400,7 +398,7 @@ class MaskSemanticDataset(Dataset):
 class BatchCollation:
     def __init__(self):
         self.keys = [
-            # "pt_coord",
+            "pt_coord",
             "feats",
             "uvrgb",
             "uvrgb_ind",

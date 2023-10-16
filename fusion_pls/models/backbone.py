@@ -187,5 +187,7 @@ class AutoWeightedFeatureFusion(nn.Module):
         fused_feats = torch.cat([weighted_feats_m1, weighted_feats_m2], dim=2)
         # MLP
         fused_feats = self.encoder(fused_feats)
+        # residual
+        fused_feats = fused_feats + feats_m1
 
         return fused_feats

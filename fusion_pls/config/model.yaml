@@ -19,8 +19,10 @@ MODEL:
     OVERLAP_THRESHOLD: 0.8
 
 LOSS:
-    WEIGHTS_KEYS: ['loss_ce','loss_dice','loss_mask']
-    WEIGHTS: [2.0, 5.0, 5.0]
+    SEG_WEIGHTS_KEYS: ['seg_loss_ce','seg_loss_dice','seg_loss_mask']
+    SEG_WEIGHTS: [2.0, 5.0, 5.0]
+    DET_WEIGHTS_KEYS: ['det_loss_cls', 'det_loss_bbox', 'det_loss_giou']
+    DET_WEIGHTS: [1.0, 5.0, 2.0]
     EOS_COEF: 0.1
     NUM_POINTS: 50000
     NUM_MASK_PTS: 500 # points to sample within each mask

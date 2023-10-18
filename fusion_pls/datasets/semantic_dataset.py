@@ -212,7 +212,6 @@ class SemanticDataset(Dataset):
             sem_labels = annotated_data & 0xFFFF
             ins_labels = annotated_data >> 16
             sem_labels = np.vectorize(self.learning_map.__getitem__)(sem_labels)
-            # TODO: add bbox labels
 
         return (
             xyz,

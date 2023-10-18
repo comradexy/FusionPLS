@@ -19,21 +19,24 @@ MODEL:
     OVERLAP_THRESHOLD: 0.8
 
 LOSS:
-    SEG_WEIGHTS_KEYS: ['seg_loss_ce','seg_loss_dice','seg_loss_mask']
-    SEG_WEIGHTS: [2.0, 5.0, 5.0]
-    DET_WEIGHTS_KEYS: ['det_loss_cls', 'det_loss_bbox', 'det_loss_giou']
-    DET_WEIGHTS: [1.0, 5.0, 2.0]
+    DET:
+        WEIGHTS_KEYS: [ 'det_loss_ce', 'det_loss_bbox', 'det_loss_giou' ]
+        WEIGHTS: [ 1.0, 5.0, 2.0 ]
+    SEG:
+        WEIGHTS_KEYS: ['seg_loss_ce','seg_loss_dice','seg_loss_mask']
+        WEIGHTS: [ 2.0, 5.0, 5.0 ]
+    SEM:
+        WEIGHTS: [ 2, 6 ] #Ce, Lovasz
     EOS_COEF: 0.1
     NUM_POINTS: 50000
     NUM_MASK_PTS: 500 # points to sample within each mask
     P_RATIO: 0.4 # ratio of total points to use for the matching
-    SEM:
-        WEIGHTS: [2,6] #Ce, Lovasz
 
 KITTI:
     PATH: data/kitti
     CONFIG: datasets/semantic-kitti.yaml
     NUM_CLASSES: 20
+    NUM_THING_CLASSES: 9
     IGNORE_LABEL: 0
     MIN_POINTS: 10 #smallest mask
     SPACE: # coord limits
@@ -45,6 +48,7 @@ NUSCENES:
     PATH: data/nuscenes
     CONFIG: datasets/semantic-nuscenes.yaml
     NUM_CLASSES: 17
+    NUM_THING_CLASSES: 9
     IGNORE_LABEL: 0
     MIN_POINTS: 10 #smallest mask
     SPACE: # coord limits

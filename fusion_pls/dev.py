@@ -131,7 +131,7 @@ if __name__ == '__main__':
         yaml.safe_load(open(join(getDir(__file__), "./config/decoder.yaml")))
     )
     cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
-    cfg.TRAIN.BATCH_SIZE = 1
+    cfg.TRAIN.BATCH_SIZE = 2
 
     # # backbone = FusionEncoder(cfg.BACKBONE, cfg[cfg.MODEL.DATASET])
     # # backbone = backbone.to(device)
@@ -139,8 +139,8 @@ if __name__ == '__main__':
     # # cpe = ColorPointEncoder(cfg.BACKBONE.CPE, cfg[cfg.MODEL.DATASET])
     # # cpe = cpe.to(device)
     #
-    model = MaskPS(cfg)
-    model.to(device)
+    # model = MaskPS(cfg)
+    # model.to(device)
     cfg.KITTI.PATH = '/data/dxy/SemanticKITTI/dataset'
     data = SemanticDatasetModule(cfg)
     data.setup()
@@ -153,17 +153,9 @@ if __name__ == '__main__':
     #     pass
 
     sample = next(test_iter)
-    # print(sample.keys())
-    # print(f"feats: {sample['feats'][0].shape}")
-    # print(f"uvrgb: {sample['uvrgb'][0].shape}")
-    # print(f"uvrgb_ind: {sample['uvrgb_ind'][0].shape}")
-    # print(f"uvrgb_ind_len_true: {sample['uvrgb_ind'][0].sum()}")
-    model(sample)
-    # tf = TensorField(sample, 0.1)
-    # st = tf.sparse()
-    # coords = st.C.float()
-    # feats = st.F.float()
-    # assert type(coords) == torch.Tensor and type(feats) == torch.Tensor, \
-    #     "coords and feats should be torch.Tensor"
-    # print(f"vox_feats: {feats.shape}")
-    # print(f"vox_coords: {coords.shape}")
+    print(sample.keys())
+    print(sample['masks_cls'][0].shape)
+    print(len(sample['masks_ids'][0]))
+    print(sample['masks_ids'][0][0].shape)
+    print(sample['masks'][0].shape)
+

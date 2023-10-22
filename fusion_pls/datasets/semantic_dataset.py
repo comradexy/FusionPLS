@@ -300,6 +300,8 @@ class MaskSemanticDataset(Dataset):
                 torch.tensor([]),
                 torch.tensor([]),
                 [],
+                torch.tensor([]),
+                torch.tensor([]),
                 fname,
                 calib,
                 pose,
@@ -371,6 +373,20 @@ class MaskSemanticDataset(Dataset):
                 masks.shape[0] == masks_cls.shape[0]
         ), f"not same number masks and classes: masks {masks.shape[0]}, classes {masks_cls.shape[0]} "
 
+        # things bbox
+        # bbox format: [cx, cy, cz, w, l, h, rot]
+        things_bbox = np.zeros((len(things_masks), 7))
+        for i, mask in enumerate(things_masks):
+            # get instance xyz
+            _xyz = xyz[mask.astype(bool)]
+            # compute bbox
+            cx, cy, cz = np.mean(_xyz, axis=0)
+            w, l, h = np.max(_xyz, axis=0) - np.min(_xyz, axis=0)
+            rot = 0
+            things_bbox[i, :] = np.array([cx, cy, cz, w, l, h, rot], dtype=np.float32)
+        things_cls = torch.from_numpy(things_cls)
+        things_bbox = torch.from_numpy(things_bbox)
+
         # Augmentations
         # xyz contains original points coordinates
         # feats contains augmented coordinates and other textural features
@@ -387,6 +403,8 @@ class MaskSemanticDataset(Dataset):
             masks,
             masks_cls,
             masks_ids,
+            things_cls,
+            things_bbox,
             fname,  # file path of pcd
             calib,
             pose,
@@ -406,6 +424,8 @@ class BatchCollation:
             "masks",
             "masks_cls",
             "masks_ids",
+            "things_cls",
+            "things_bbox",
             "fname",
             "calib",
             "pose",

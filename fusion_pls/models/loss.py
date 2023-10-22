@@ -30,14 +30,14 @@ class MaskLoss(nn.Module):
         self.num_classes = data_cfg.NUM_CLASSES
         self.ignore = data_cfg.IGNORE_LABEL
         self.matcher = MaskMatcher(
-            costs_class=cfg.SEG.WEIGHTS[0],
-            cost_dice=cfg.SEG.WEIGHTS[1],
-            cost_mask=cfg.SEG.WEIGHTS[2],
+            costs_class=cfg.MASK.WEIGHTS[0],
+            cost_dice=cfg.MASK.WEIGHTS[1],
+            cost_mask=cfg.MASK.WEIGHTS[2],
             p_ratio=cfg.P_RATIO,
         )
 
         self.weight_dict = {
-            cfg.SEG.WEIGHTS_KEYS[i]: cfg.SEG.WEIGHTS[i] for i in range(len(cfg.SEG.WEIGHTS))
+            cfg.MASK.WEIGHTS_KEYS[i]: cfg.MASK.WEIGHTS[i] for i in range(len(cfg.MASK.WEIGHTS))
         }
 
         self.eos_coef = cfg.EOS_COEF
@@ -114,7 +114,7 @@ class MaskLoss(nn.Module):
 
     def loss_classes(self, outputs, targets, indices):
         """Classification loss (NLL)
-        targets dicts must contain the key "classes" containing a tensor of dim [nb_target_boxes]
+        targets dicts must contain the key "classes" containing a tensor of dim [nb_target_masks]
         """
         assert "pred_logits" in outputs
         pred_logits = outputs["pred_logits"].float()
@@ -139,7 +139,7 @@ class MaskLoss(nn.Module):
             self.weights.to(pred_logits),
             ignore_index=self.ignore,
         )
-        losses = {"loss_ce": loss_ce}
+        losses = {"pan_loss_ce": loss_ce}
         return losses
 
     def loss_masks(self, outputs, targets, indices, num_masks, masks_ids):
@@ -172,8 +172,8 @@ class MaskLoss(nn.Module):
         del target_masks
 
         losses = {
-            "loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks),
-            "loss_dice": dice_loss_jit(point_logits, point_labels, num_masks),
+            "pan_loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks),
+            "pan_loss_dice": dice_loss_jit(point_logits, point_labels, num_masks),
         }
 
         return losses
@@ -379,6 +379,15 @@ class DetLoss(nn.Module):
         self.num_classes = data_cfg.NUM_THING_CLASSES
         self.ignore = data_cfg.IGNORE_LABEL
 
+        self.coord_range = torch.tensor([
+            data_cfg.SPACE[0][1] - data_cfg.SPACE[0][0],  # x
+            data_cfg.SPACE[1][1] - data_cfg.SPACE[1][0],  # y
+            data_cfg.SPACE[2][1] - data_cfg.SPACE[2][0],  # z
+            data_cfg.SPACE[0][1] - data_cfg.SPACE[0][0],  # w
+            data_cfg.SPACE[1][1] - data_cfg.SPACE[1][0],  # l
+            data_cfg.SPACE[2][1] - data_cfg.SPACE[2][0],  # h
+            2 * 3.14159265359,  # rot
+        ])
         self.matcher = BBoxMatcher(
             cost_class=cfg.DET.WEIGHTS[0],
             cost_bbox=cfg.DET.WEIGHTS[1],
@@ -425,9 +434,9 @@ class DetLoss(nn.Module):
 
         # Compute all the requested losses
         losses = {}
-        losses.update(
-            self.get_losses(outputs, targ, indices, num_bboxes)
-        )
+        # losses.update(
+        #     self.get_losses(outputs, targ, indices, num_bboxes)
+        # )
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
@@ -490,7 +499,7 @@ class DetLoss(nn.Module):
     def loss_bboxes(self, outputs, targets, indices):
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
            targets dicts must contain the key "bboxes" containing a tensor of dim [nb_target_bboxes, 7]
-           The target bboxes are expected in format (cx, cy, cz, w, h, l, rot).
+           The target bboxes are expected in format (cx, cy, cz, w, l, h, rot).
 
            params:
                 outputs: dict of tensors:
@@ -514,9 +523,14 @@ class DetLoss(nn.Module):
         target_bboxes = torch.cat([t[i] for t, (_, i) in zip(targets["bboxes"], indices)])
 
         num_bboxes = target_bboxes.shape[0]
+        if num_bboxes == 0:
+            return {"det_loss_bbox": 0.0,
+                    "det_loss_giou": 0.0}
+
+        bbox_range = self.coord_range.to(pred_bboxes)
         loss_bbox = F.smooth_l1_loss(
-            pred_bboxes[idx],
-            target_bboxes,
+            pred_bboxes[idx] / bbox_range,
+            target_bboxes / bbox_range,
             reduction="none",
         ).sum() / num_bboxes  # Normalize by the number of boxes
         losses = {"det_loss_bbox": loss_bbox}

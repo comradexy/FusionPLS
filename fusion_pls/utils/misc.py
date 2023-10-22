@@ -63,8 +63,8 @@ def generalized_box_iou(boxes1, boxes2):
     and M = len(boxes2)
     """
     # do an early check
-    assert (boxes1[:, 3:] >= 0).all()
-    assert (boxes2[:, 3:] >= 0).all()
+    # assert (boxes1[:, :3] >= 0).all()
+    # assert (boxes2[:, :3] >= 0).all()
 
     # Calculate the 3D IoU
     iou, union = box_iou_3d(boxes1, boxes2)

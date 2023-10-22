@@ -61,16 +61,16 @@ class BBoxMatcher(nn.Module):
         out_bbox = outputs["pred_bboxes"].flatten(0, 1)  # [batch_size * num_queries, 7]
 
         # Also concat the target labels and boxes
-        tgt_ids = torch.cat([v["classes"] for v in targets])
-        tgt_bbox = torch.cat([v["bboxes"] for v in targets])
+        tgt_cls = torch.cat(targets["classes"])
+        tgt_bbox = torch.cat(targets["bboxes"])
 
         # Compute the classification cost. Contrary to the loss, we don't use the NLL,
         # but approximate it in 1 - proba[target class].
         # The 1 is a constant that doesn't change the matching, it can be ommitted.
-        cost_class = -out_prob[:, tgt_ids]
+        cost_class = -out_prob[:, tgt_cls]
 
         # Compute the L1 cost between boxes
-        cost_bbox = torch.cdist(out_bbox, tgt_bbox, p=1)
+        cost_bbox = torch.cdist(out_bbox.float(), tgt_bbox.float(), p=1.)
 
         # Compute the giou cost betwen boxes
         cost_giou = -generalized_box_iou(out_bbox, tgt_bbox)
@@ -79,7 +79,7 @@ class BBoxMatcher(nn.Module):
         C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
         C = C.view(bs, num_queries, -1).cpu()
 
-        sizes = [len(v["bboxes"]) for v in targets]
+        sizes = [len(v) for v in targets["bboxes"]]
         indices = [lsa(c[i]) for i, c in enumerate(C.split(sizes, -1))]
         return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
 
@@ -215,5 +215,3 @@ def batch_sigmoid_ce_cost(inputs: torch.Tensor, targets: torch.Tensor):
 batch_sigmoid_ce_cost_jit = torch.jit.script(
     batch_sigmoid_ce_cost
 )  # type: torch.jit.ScriptModule
-
-

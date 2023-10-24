@@ -108,7 +108,7 @@ class FusionEncoder(nn.Module):
         # replace pcd_feats in camera fov with fused_feats
         for l in range(self.n_levels):
             for pf, ff, mask in zip(pcd_feats[l], fused_feats[l], camera_fov_mask):
-                pf[mask] = ff
+                pf[mask] += ff
 
         feats, coords, pad_masks = self.pad_batch(coords, pcd_feats)
         bb_logits = self.sem_head(feats[-1])
@@ -177,6 +177,6 @@ class AutoWeightedFeatureFusion(nn.Module):
         # MLP
         fused_feats = self.encoder(fused_feats)
         # residual
-        fused_feats = fused_feats + feats_m1
+        fused_feats = fused_feats
 
         return fused_feats

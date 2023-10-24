@@ -373,19 +373,23 @@ class MaskSemanticDataset(Dataset):
                 masks.shape[0] == masks_cls.shape[0]
         ), f"not same number masks and classes: masks {masks.shape[0]}, classes {masks_cls.shape[0]} "
 
-        # things bbox
-        # bbox format: [cx, cy, cz, w, l, h, rot]
-        things_bbox = np.zeros((len(things_masks), 7))
+        # things center heat map
+        things_chm = np.zeros((len(things_masks), xyz.shape[0], 1))
         for i, mask in enumerate(things_masks):
             # get instance xyz
             _xyz = xyz[mask.astype(bool)]
-            # compute bbox
-            cx, cy, cz = np.mean(_xyz, axis=0)
-            w, l, h = np.max(_xyz, axis=0) - np.min(_xyz, axis=0)
-            rot = 0
-            things_bbox[i, :] = np.array([cx, cy, cz, w, l, h, rot], dtype=np.float32)
+            # generate offset to center of instance
+            center = np.mean(_xyz, axis=0)
+            offset = _xyz - center
+            # normalize offset
+            max_x, max_y, max_z = np.max(_xyz, axis=0)
+            min_x, min_y, min_z = np.min(_xyz, axis=0)
+            inst_size = np.array([max_x - min_x, max_y - min_y, max_z - min_z])
+            offset = offset / inst_size
+            things_chm[i, ~mask.astype(bool)] = 0.0
+            things_chm[i, mask.astype(bool)] = 1 - np.linalg.norm(offset, axis=1).reshape(-1, 1)
         things_cls = torch.from_numpy(things_cls)
-        things_bbox = torch.from_numpy(things_bbox)
+        things_chm = torch.from_numpy(things_chm)
 
         # Augmentations
         # xyz contains original points coordinates
@@ -403,8 +407,9 @@ class MaskSemanticDataset(Dataset):
             masks,
             masks_cls,
             masks_ids,
+            things_chm,
             things_cls,
-            things_bbox,
+            things_masks_ids,
             fname,  # file path of pcd
             calib,
             pose,
@@ -424,8 +429,9 @@ class BatchCollation:
             "masks",
             "masks_cls",
             "masks_ids",
+            "things_chm",
             "things_cls",
-            "things_bbox",
+            "things_mask_ids",
             "fname",
             "calib",
             "pose",

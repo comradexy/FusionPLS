@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import imagesize
+import open3d as o3d
 from PIL import Image
 from tqdm import tqdm
 from easydict import EasyDict as edict
@@ -16,6 +17,22 @@ from fusion_pls.models.color_encoder import ColorPointEncoder
 from fusion_pls.models.backbone import FusionEncoder
 from fusion_pls.models.mask_model import MaskPS
 from fusion_pls.datasets.semantic_dataset import SemanticDatasetModule
+
+
+def vis_pcd_offset(pts, size=2.0, background=(0, 0, 0), name="Open3D"):
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(pts[:, :3])
+    color = np.ones((pts.shape[0], 3))
+    offset = np.linalg.norm(pts[:, 3:], axis=1)
+    color[:, 2] = offset
+    pcd.colors = o3d.utility.Vector3dVector(color)
+
+    vis = o3d.visualization.Visualizer()
+    vis.create_window(width=720, height=720, window_name=name)
+    vis.get_render_option().background_color = background
+    vis.get_render_option().point_size = size
+    vis.add_geometry(pcd)
+    vis.run()
 
 
 def getDir(obj):
@@ -131,7 +148,7 @@ if __name__ == '__main__':
         yaml.safe_load(open(join(getDir(__file__), "./config/decoder.yaml")))
     )
     cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
-    cfg.TRAIN.BATCH_SIZE = 2
+    cfg.TRAIN.BATCH_SIZE = 1
 
     # # backbone = FusionEncoder(cfg.BACKBONE, cfg[cfg.MODEL.DATASET])
     # # backbone = backbone.to(device)
@@ -145,9 +162,9 @@ if __name__ == '__main__':
     data = SemanticDatasetModule(cfg)
     data.setup()
     # 获取test DataLoader
-    test_loader = data.train_dataloader()
+    loader = data.train_dataloader()
     # 从DataLoader中获取迭代器
-    test_iter = iter(test_loader)
+    test_iter = iter(loader)
     # # 通过迭代器遍历所有样本
     # for i in tqdm(test_iter, desc='Vist dataloader'):
     #     pass
@@ -155,7 +172,6 @@ if __name__ == '__main__':
     sample = next(test_iter)
     print(sample.keys())
     print(sample['masks_cls'][0].shape)
-    print(len(sample['masks_ids'][0]))
-    print(sample['masks_ids'][0][0].shape)
-    print(sample['masks'][0].shape)
-
+    print(sample['masks_cls'][0])
+    print(sample['things_cls'][0].shape)
+    print(sample['things_cls'][0])

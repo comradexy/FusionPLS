@@ -3,7 +3,7 @@ from itertools import filterfalse
 
 import torch
 import torch.nn.functional as F
-from fusion_pls.models.matcher import MaskMatcher, BBoxMatcher
+from fusion_pls.models.matcher import MaskMatcher, InstMatcher
 from fusion_pls.utils.misc import (get_world_size, is_dist_avail_and_initialized,
                                    pad_stack, sample_points, generalized_box_iou)
 from torch import nn
@@ -51,7 +51,7 @@ class MaskLoss(nn.Module):
         self.num_points = cfg.NUM_POINTS
         self.n_mask_pts = cfg.NUM_MASK_PTS
 
-    def forward(self, outputs, targets, masks_ids, coors):
+    def forward(self, outputs, targets, masks_ids):
         """This performs the loss computation.
         Parameters:
              outputs: dict of tensors:
@@ -62,6 +62,7 @@ class MaskLoss(nn.Module):
              targets: dict of lists len BS:
                           classes: semantic class for each GT mask
                           masks: [N_Masks, Pts] binary masks for each point
+             masks_ids: [N_Masks] list of ids for each mask
         """
         losses = {}
         # Compute the average number of target boxes accross all nodes, for normalization purposes
@@ -80,14 +81,14 @@ class MaskLoss(nn.Module):
         indices = self.matcher(outputs_no_aux, targ)
 
         losses.update(
-            self.get_losses(outputs, targ, indices, num_masks, masks_ids, coors)
+            self.get_losses(outputs, targ, indices, num_masks, masks_ids)
         )
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
                 indices = self.matcher(aux_outputs, targ)
                 l_dict = self.get_losses(
-                    aux_outputs, targ, indices, num_masks, masks_ids, coors
+                    aux_outputs, targ, indices, num_masks, masks_ids
                 )
                 l_dict = {f"{i}_" + k: v for k, v in l_dict.items()}
                 losses.update(l_dict)
@@ -102,7 +103,7 @@ class MaskLoss(nn.Module):
         return losses
 
     def get_losses(
-            self, outputs, targets, indices, num_masks, masks_ids, coors, do_cls=True
+            self, outputs, targets, indices, num_masks, masks_ids, do_cls=True
     ):
         if do_cls:
             classes = self.loss_classes(outputs, targets, indices)
@@ -119,7 +120,7 @@ class MaskLoss(nn.Module):
         assert "pred_logits" in outputs
         pred_logits = outputs["pred_logits"].float()
 
-        idx = self._get_pred_permutation_idx(indices)
+        idx = _get_pred_permutation_idx(indices)
 
         target_classes_o = torch.cat(
             [t[J] for t, (_, J) in zip(targets["classes"], indices)]
@@ -150,8 +151,8 @@ class MaskLoss(nn.Module):
         n_masks = [m.shape[0] for m in masks]
         target_masks = pad_stack(masks)
 
-        pred_idx = self._get_pred_permutation_idx(indices)
-        tgt_idx = self._get_tgt_permutation_idx(indices, n_masks)
+        pred_idx = _get_pred_permutation_idx(indices)
+        tgt_idx = _get_tgt_permutation_idx(indices, n_masks)
         pred_masks = outputs["pred_masks"]
         pred_masks = pred_masks[pred_idx[0], :, pred_idx[1]]
         target_masks = target_masks.to(pred_masks)
@@ -177,73 +178,6 @@ class MaskLoss(nn.Module):
         }
 
         return losses
-
-    def _get_pred_permutation_idx(self, indices):
-        # permute predictions following indices
-        batch_idx = torch.cat(
-            [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
-        )
-        src_idx = torch.cat([src for (src, _) in indices])
-        return batch_idx, src_idx
-
-    def _get_tgt_permutation_idx(self, indices, n_masks):
-        # permute targets following indices
-        batch_idx = torch.cat(
-            [torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)]
-        )
-        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
-        # From [B,id] to [id] of stacked masks
-        cont_id = torch.cat([torch.arange(n) for n in n_masks])
-        b_id = torch.stack((batch_idx, cont_id), axis=1)
-        map_m = torch.zeros((torch.max(batch_idx) + 1, max(n_masks)))
-        for i in range(len(b_id)):
-            map_m[b_id[i, 0], b_id[i, 1]] = i
-        stack_ids = [
-            int(map_m[batch_idx[i], tgt_idx[i]]) for i in range(len(batch_idx))
-        ]
-        return stack_ids
-
-
-def dice_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float):
-    """
-    Compute the DICE loss, similar to generalized IOU for masks
-    Args:
-        inputs: A float tensor of arbitrary shape.
-                The predictions for each example.
-        targets: A float tensor with the same shape as inputs. Stores the binary
-                 classification label for each element in inputs
-                (0 for the negative class and 1 for the positive class).
-    """
-    inputs = inputs.sigmoid()
-    numerator = 2 * (inputs * targets).sum(-1)
-    denominator = inputs.sum(-1) + targets.sum(-1)
-    # loss = 1 - (numerator + 0.001) / (denominator + 0.001)
-    loss = 1 - (numerator + 1) / (denominator + 1)
-    return loss.sum() / num_masks
-
-
-dice_loss_jit = torch.jit.script(dice_loss)  # type: torch.jit.ScriptModule
-
-
-def sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float):
-    """
-    Args:
-        inputs: A float tensor of arbitrary shape.
-                The predictions for each example.
-        targets: A float tensor with the same shape as inputs. Stores the binary
-                 classification label for each element in inputs
-                (0 for the negative class and 1 for the positive class).
-    Returns:
-        Loss tensor
-    """
-    loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
-    return loss.mean(1).sum() / num_masks
-
-
-sigmoid_ce_loss_jit = torch.jit.script(sigmoid_ce_loss)  # type: torch.jit.ScriptModule
-
-
-################################################################################
 
 
 class SemLoss(nn.Module):
@@ -359,7 +293,7 @@ class SemLoss(nn.Module):
         return acc / n
 
 
-class DetLoss(nn.Module):
+class InstLoss(nn.Module):
     """This class computes the loss for DETR.
         The process happens in two steps:
             1) we compute hungarian assignment between ground truth boxes and the outputs of the model
@@ -379,43 +313,39 @@ class DetLoss(nn.Module):
         self.num_classes = data_cfg.NUM_THING_CLASSES
         self.ignore = data_cfg.IGNORE_LABEL
 
-        self.coord_range = torch.tensor([
-            data_cfg.SPACE[0][1] - data_cfg.SPACE[0][0],  # x
-            data_cfg.SPACE[1][1] - data_cfg.SPACE[1][0],  # y
-            data_cfg.SPACE[2][1] - data_cfg.SPACE[2][0],  # z
-            data_cfg.SPACE[0][1] - data_cfg.SPACE[0][0],  # w
-            data_cfg.SPACE[1][1] - data_cfg.SPACE[1][0],  # l
-            data_cfg.SPACE[2][1] - data_cfg.SPACE[2][0],  # h
-            2 * 3.14159265359,  # rot
-        ])
-        self.matcher = BBoxMatcher(
-            cost_class=cfg.DET.WEIGHTS[0],
-            cost_bbox=cfg.DET.WEIGHTS[1],
-            cost_giou=cfg.DET.WEIGHTS[2],
+        self.matcher = InstMatcher(
+            cost_cls=cfg.INST.WEIGHTS[0],
+            cost_chm=cfg.INST.WEIGHTS[1],
+            p_ratio=cfg.P_RATIO,
         )
 
         self.weight_dict = {
-            cfg.DET.WEIGHTS_KEYS[i]: cfg.DET.WEIGHTS[i] for i in range(len(cfg.DET.WEIGHTS))
+            cfg.INST.WEIGHTS_KEYS[i]: cfg.INST.WEIGHTS[i] for i in range(len(cfg.INST.WEIGHTS))
         }
 
         self.eos_coef = cfg.EOS_COEF
 
-        weights = torch.ones(self.num_classes + 1)
-        weights[0] = 0.0
-        weights[-1] = self.eos_coef
-        self.weights = weights
+        cls_weights = torch.ones(self.num_classes + 1)
+        cls_weights[0] = 0.0
+        cls_weights[-1] = self.eos_coef
+        self.cls_weights = cls_weights
 
-    def forward(self, outputs, targets):
+        # pointwise mask loss parameters
+        self.num_points = cfg.NUM_POINTS
+        self.n_mask_pts = cfg.NUM_MASK_PTS
+
+    def forward(self, outputs, targets, masks_ids):
         """This performs the loss computation.
                 Parameters:
                      outputs: dict of tensors:
                          pred_logits: [B, Q, NClass+1]
-                         pred_bboxes: [B, Q, 7]
-                         aux_outputs: list of dicts ['pred_logits'], ['pred_bboxes'] for each
+                         pred_heatmaps: [B, N_Pts, Q]
+                         aux_outputs: list of dicts ['pred_logits'], ['pred_heatmaps'] for each
                                       intermediate output
                      targets: dict of lists len BS:
-                                  classes: [N_BBoxes, 1], class for each GT bbox
-                                  bboxes: [N_BBoxes, 7]
+                                  classes: [N_Heatmaps, 1], class for each GT center heatmap
+                                  heatmaps: [N_Heatmaps, N_Pts]
+                     masks_ids: [N_Masks] list of ids for each things_mask
                 """
         targ = targets
         outputs_no_aux = {k: v for k, v in outputs.items() if k != "aux_outputs"}
@@ -424,26 +354,26 @@ class DetLoss(nn.Module):
         indices = self.matcher(outputs_no_aux, targ)
 
         # Compute the average number of target boxes accross all nodes, for normalization purposes
-        num_bboxes = sum(len(t) for t in targ["classes"])
-        num_bboxes = torch.as_tensor(
-            [num_bboxes], dtype=torch.float, device=next(iter(outputs.values())).device
+        num_heatmaps = sum(len(t) for t in targ["classes"])
+        num_heatmaps = torch.as_tensor(
+            [num_heatmaps], dtype=torch.float, device=next(iter(outputs.values())).device
         )
         if is_dist_avail_and_initialized():
-            torch.distributed.all_reduce(num_bboxes)
-        num_bboxes = torch.clamp(num_bboxes / get_world_size(), min=1).item()
+            torch.distributed.all_reduce(num_heatmaps)
+        num_heatmaps = torch.clamp(num_heatmaps / get_world_size(), min=1).item()
 
         # Compute all the requested losses
         losses = {}
-        # losses.update(
-        #     self.get_losses(outputs, targ, indices, num_bboxes)
-        # )
+        losses.update(
+            self.get_losses(outputs, targ, indices, num_heatmaps, masks_ids)
+        )
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
                 indices = self.matcher(aux_outputs, targ)
                 l_dict = self.get_losses(
-                    aux_outputs, targ, indices, num_bboxes
+                    aux_outputs, targ, indices, num_heatmaps, masks_ids
                 )
                 l_dict = {f"{i}_" + k: v for k, v in l_dict.items()}
                 losses.update(l_dict)
@@ -457,13 +387,13 @@ class DetLoss(nn.Module):
 
         return losses
 
-    def get_losses(self, outputs, targets, indices, num_boxes, do_cls=True):
+    def get_losses(self, outputs, targets, indices, num_heatmaps, mask_ids, do_cls=True):
         if do_cls:
             classes = self.loss_classes(outputs, targets, indices)
         else:
             classes = {}
-        bboxes = self.loss_bboxes(outputs, targets, indices)
-        classes.update(bboxes)
+        heatmaps = self.loss_heatmaps(outputs, targets, indices, num_heatmaps, mask_ids)
+        classes.update(heatmaps)
         return classes
 
     def loss_classes(self, outputs, targets, indices):
@@ -473,7 +403,7 @@ class DetLoss(nn.Module):
         assert "pred_logits" in outputs
         pred_logits = outputs["pred_logits"].float()
 
-        idx = self._get_pred_permutation_idx(indices)
+        idx = _get_pred_permutation_idx(indices)
 
         target_classes_o = torch.cat(
             [t[J] for t, (_, J) in zip(targets["classes"], indices)]
@@ -490,79 +420,134 @@ class DetLoss(nn.Module):
         loss_ce = F.cross_entropy(
             pred_logits.transpose(1, 2),
             target_classes,
-            self.weights.to(pred_logits),
+            self.cls_weights.to(pred_logits),
             ignore_index=self.ignore,
         )
-        losses = {"det_loss_ce": loss_ce}
+        losses = {"inst_loss_ce": loss_ce}
         return losses
 
-    def loss_bboxes(self, outputs, targets, indices):
-        """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
-           targets dicts must contain the key "bboxes" containing a tensor of dim [nb_target_bboxes, 7]
-           The target bboxes are expected in format (cx, cy, cz, w, l, h, rot).
+    def loss_heatmaps(self, outputs, targets, indices, num_heatmaps, masks_ids):
+        """Compute the losses related to the heatmaps."""
+        assert "pred_heatmaps" in outputs
 
-           params:
-                outputs: dict of tensors:
-                    pred_logits: [B, Q, NClass+1]
-                    pred_bboxes: [B, Q, 7]
-                    aux_outputs: list of dicts ['pred_logits'], ['pred_bboxes'] for each
-                                    intermediate output
-                targets: dict of lists len BS:
-                    classes: [N_BBoxes, 1], class for each GT bbox
-                    bboxes: [N_BBoxes, 7]
-                indices: list of tuples (pred_idx, tgt_idx) where:
-                    - pred_idx is the indices of the selected predictions (in order)
-                    - tgt_idx is the indices of the corresponding selected targets (in order)
+        heatmaps = [t for t in targets["heatmaps"]]
+        n_heatmaps = [hm.shape[0] for hm in heatmaps]
+        target_heatmaps = pad_stack(heatmaps)
 
-              returns:
-                losses: dict of losses
-        """
-        assert "pred_bboxes" in outputs
-        pred_bboxes = outputs["pred_bboxes"]
-        idx = self._get_pred_permutation_idx(indices)
-        target_bboxes = torch.cat([t[i] for t, (_, i) in zip(targets["bboxes"], indices)])
+        if target_heatmaps.shape[0] == 0:
+            return {"inst_loss_chm": 0.0}
 
-        num_bboxes = target_bboxes.shape[0]
-        if num_bboxes == 0:
-            return {"det_loss_bbox": 0.0,
-                    "det_loss_giou": 0.0}
+        pred_idx = _get_pred_permutation_idx(indices)
+        tgt_idx = _get_tgt_permutation_idx(indices, n_heatmaps)
+        pred_heatmaps = outputs["pred_heatmaps"]
+        pred_heatmaps = pred_heatmaps[pred_idx[0], :, pred_idx[1]]
+        target_heatmaps = target_heatmaps.to(pred_heatmaps)
+        target_heatmaps = target_heatmaps[tgt_idx]
 
-        bbox_range = self.coord_range.to(pred_bboxes)
-        loss_bbox = F.smooth_l1_loss(
-            pred_bboxes[idx] / bbox_range,
-            target_bboxes / bbox_range,
-            reduction="none",
-        ).sum() / num_bboxes  # Normalize by the number of boxes
-        losses = {"det_loss_bbox": loss_bbox}
+        with torch.no_grad():
+            idx = sample_points(heatmaps, masks_ids, self.n_mask_pts, self.num_points)
+            n_heatmaps.insert(0, 0)
+            nm = torch.cumsum(torch.tensor(n_heatmaps), 0)
+            point_labels = torch.cat(
+                [target_heatmaps[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+            )
+        point_logits = torch.cat(
+            [pred_heatmaps[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+        )
 
-        loss_giou = 1 - torch.diag(
-            generalized_box_iou(pred_bboxes[idx], target_bboxes)
-        ).sum() / num_bboxes
-        losses.update({"det_loss_giou": loss_giou})
+        del pred_heatmaps
+        del target_heatmaps
+
+        losses = {"inst_loss_chm": smooth_l1_cost(point_logits, point_labels, num_heatmaps)}
 
         return losses
 
-    def _get_pred_permutation_idx(self, indices):
-        # permute predictions following indices
-        batch_idx = torch.cat(
-            [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
-        )
-        src_idx = torch.cat([src for (src, _) in indices])
-        return batch_idx, src_idx
 
-    def _get_tgt_permutation_idx(self, indices, n_bboxes):
-        # permute targets following indices
-        batch_idx = torch.cat(
-            [torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)]
-        )
-        tgt_idx = torch.cat([tgt for (_, tgt) in indices])
-        # From [B,id] to [id] of stacked masks
-        cont_id = torch.cat([torch.arange(n) for n in n_bboxes])
-        b_id = torch.stack((batch_idx, cont_id), axis=1)
-        map_m = torch.zeros((torch.max(batch_idx) + 1, max(n_bboxes)))
-        for i in range(len(b_id)):
-            map_m[b_id[i, 0], b_id[i, 1]] = i
-        stack_ids = [
-            int(map_m[batch_idx[i], tgt_idx[i]]) for i in range(len(batch_idx))
-        ]
-        return stack_ids
+def _get_pred_permutation_idx(indices):
+    # permute predictions following indices
+    batch_idx = torch.cat(
+        [torch.full_like(src, i) for i, (src, _) in enumerate(indices)]
+    )
+    src_idx = torch.cat([src for (src, _) in indices])
+    return batch_idx, src_idx
+
+
+def _get_tgt_permutation_idx(indices, n_tgts):
+    # permute targets following indices
+    batch_idx = torch.cat(
+        [torch.full_like(tgt, i) for i, (_, tgt) in enumerate(indices)]
+    )
+    tgt_idx = torch.cat([tgt for (_, tgt) in indices])
+    # From [B,id] to [id] of stacked masks
+    cont_id = torch.cat([torch.arange(n) for n in n_tgts])
+    b_id = torch.stack((batch_idx, cont_id), axis=1)
+    map_m = torch.zeros((torch.max(batch_idx) + 1, max(n_tgts)))
+    for i in range(len(b_id)):
+        map_m[b_id[i, 0], b_id[i, 1]] = i
+    stack_ids = [
+        int(map_m[batch_idx[i], tgt_idx[i]]) for i in range(len(batch_idx))
+    ]
+    return stack_ids
+
+
+def dice_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float):
+    """
+    Compute the DICE loss, similar to generalized IOU for masks
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+        num_masks: Number of masks.
+    """
+    inputs = inputs.sigmoid()
+    numerator = 2 * (inputs * targets).sum(-1)
+    denominator = inputs.sum(-1) + targets.sum(-1)
+    # loss = 1 - (numerator + 0.001) / (denominator + 0.001)
+    loss = 1 - (numerator + 1) / (denominator + 1)
+    return loss.sum() / num_masks
+
+
+dice_loss_jit = torch.jit.script(dice_loss)  # type: torch.jit.ScriptModule
+
+
+def sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: float):
+    """
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs. Stores the binary
+                 classification label for each element in inputs
+                (0 for the negative class and 1 for the positive class).
+        num_masks: Number of masks.
+    Returns:
+        Loss tensor
+    """
+    loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    return loss.mean(1).sum() / num_masks
+
+
+sigmoid_ce_loss_jit = torch.jit.script(sigmoid_ce_loss)  # type: torch.jit.ScriptModule
+
+
+def smooth_l1_cost(inputs: torch.Tensor, targets: torch.Tensor, num_heatmaps: float):
+    """
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs.
+                Stores the regression target for each element in inputs.
+        num_heatmaps: Number of heatmaps.
+    Returns:
+        Loss tensor
+    """
+    inputs = inputs.flatten(1)
+    targets = targets.flatten(1)
+    loss = F.smooth_l1_loss(inputs, targets, reduction="none")
+    loss = loss.mean(1).sum() / num_heatmaps
+
+    return loss
+
+
+smooth_l1_cost_jit = torch.jit.script(smooth_l1_cost)  # type: torch.jit.ScriptModule

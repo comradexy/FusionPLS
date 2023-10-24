@@ -10,7 +10,7 @@ from torch.cuda.amp import autocast
 from fusion_pls.utils.misc import generalized_box_iou
 
 
-class BBoxMatcher(nn.Module):
+class InstMatcher(nn.Module):
     """This class computes an assignment between the targets and the predictions of the network
 
         For efficiency reasons, the targets don't include the no_object. Because of this, in general,
@@ -18,19 +18,20 @@ class BBoxMatcher(nn.Module):
         while the others are un-matched (and thus treated as non-objects).
         """
 
-    def __init__(self, cost_class: float = 1, cost_bbox: float = 1, cost_giou: float = 1):
+    def __init__(self, cost_cls: float = 1, cost_chm: float = 1, p_ratio: float = 0.4):
         """Creates the matcher
 
         Params:
-            cost_class: This is the relative weight of the classification error in the matching cost
-            cost_bbox: This is the relative weight of the L1 error of the bounding box coordinates in the matching cost
-            cost_giou: This is the relative weight of the giou loss of the bounding box in the matching cost
+            cost_cls: This is the relative weight of the classification error in the matching cost
+            cost_chm: This is the relative weight of the L1 error of the center heatmap in the matching cost
         """
         super().__init__()
-        self.cost_class = cost_class
-        self.cost_bbox = cost_bbox
-        self.cost_giou = cost_giou
-        assert cost_class != 0 or cost_bbox != 0 or cost_giou != 0, "all costs cant be 0"
+        self.weight_cls = cost_cls
+        self.weight_chm = cost_chm
+
+        assert cost_cls != 0 or cost_chm != 0, "all costs cant be 0"
+
+        self.p_ratio = p_ratio
 
     @torch.no_grad()
     def forward(self, outputs, targets):
@@ -39,49 +40,68 @@ class BBoxMatcher(nn.Module):
         Params:
             outputs: This is a dict that contains at least these entries:
                  "pred_logits": Tensor of dim [batch_size, num_queries, num_classes] with the classification logits
-                 "pred_bboxes": Tensor of dim [batch_size, num_queries, 7] with the predicted box coordinates, where
-                                the last dimension corresponds to [cx, cy, cz, w, l, h, rot]
+                 "pred_heatmaps": Tensor of dim [batch_size, num_queries, num_pts] with the predicted center heatmap
 
             targets: This is a list of targets (len(targets) = batch_size), where each target is a dict containing:
-                 "labels": Tensor of dim [num_target_boxes] (where num_target_boxes is the number of ground-truth
+                 "classes": Tensor of dim [num_target_boxes] (where num_target_boxes is the number of ground-truth
                            objects in the target) containing the class labels
-                 "boxes": Tensor of dim [num_target_boxes, 7] containing the target box coordinates
+                 "heatmaps": Tensor of dim [num_pts, num_target_heatmaps] containing the target center heatmap
 
         Returns:
             A list of size batch_size, containing tuples of (index_i, index_j) where:
                 - index_i is the indices of the selected predictions (in order)
                 - index_j is the indices of the corresponding selected targets (in order)
             For each batch element, it holds:
-                len(index_i) = len(index_j) = min(num_queries, num_target_boxes)
+                len(index_i) = len(index_j) = min(num_queries, num_target_heatmaps)
         """
-        bs, num_queries = outputs["pred_logits"].shape[:2]
+        return self.memory_efficient_forward(outputs, targets)
 
-        # We flatten to compute the cost matrices in a batch
-        out_prob = outputs["pred_logits"].flatten(0, 1).softmax(-1)  # [batch_size * num_queries, num_classes]
-        out_bbox = outputs["pred_bboxes"].flatten(0, 1)  # [batch_size * num_queries, 7]
+    @torch.no_grad()
+    def memory_efficient_forward(self, outputs, targets):
+        """More memory-friendly matching"""
+        bs, num_queries, num_classes = outputs["pred_logits"].shape
+        indices = []
 
-        # Also concat the target labels and boxes
-        tgt_cls = torch.cat(targets["classes"])
-        tgt_bbox = torch.cat(targets["bboxes"])
+        # Iterate through batch size
+        for b in range(bs):
+            out_prob = outputs["pred_logits"][b].softmax(-1)
+            tgt_ids = targets["classes"][b].type(torch.int64)
 
-        # Compute the classification cost. Contrary to the loss, we don't use the NLL,
-        # but approximate it in 1 - proba[target class].
-        # The 1 is a constant that doesn't change the matching, it can be ommitted.
-        cost_class = -out_prob[:, tgt_cls]
+            cost_class = -out_prob[:, tgt_ids]
 
-        # Compute the L1 cost between boxes
-        cost_bbox = torch.cdist(out_bbox.float(), tgt_bbox.float(), p=1.)
+            out_chm = outputs["pred_heatmaps"][b].permute(1, 0)  # [num_queries, num_pts]
+            tgt_chm = targets["heatmaps"][b].to(out_chm)
+            n_pts_scan = tgt_chm.shape[1]
 
-        # Compute the giou cost betwen boxes
-        cost_giou = -generalized_box_iou(out_bbox, tgt_bbox)
+            # all heatmaps share the same set of points for efficient matching!
+            pt_idx = torch.randint(
+                0, n_pts_scan, (int(self.p_ratio * n_pts_scan), 1)
+            ).squeeze(1)
 
-        # Final cost matrix
-        C = self.cost_bbox * cost_bbox + self.cost_class * cost_class + self.cost_giou * cost_giou
-        C = C.view(bs, num_queries, -1).cpu()
+            # get gt labels
+            tgt_chm = tgt_chm[:, pt_idx]
+            out_chm = out_chm[:, pt_idx]
 
-        sizes = [len(v) for v in targets["bboxes"]]
-        indices = [lsa(c[i]) for i, c in enumerate(C.split(sizes, -1))]
-        return [(torch.as_tensor(i, dtype=torch.int64), torch.as_tensor(j, dtype=torch.int64)) for i, j in indices]
+            with autocast(enabled=False):
+                out_chm = out_chm.float()  # [num_q,num_pts]
+                tgt_chm = tgt_chm.float()  # [n_ins,num_pts]
+                cost_chm = batch_smooth_l1_cost(out_chm, tgt_chm)
+
+            # Final cost matrix
+            C = (
+                    self.weight_chm * cost_chm
+                    + self.weight_cls * cost_class
+            )
+            C = C.reshape(num_queries, -1).cpu()
+            indices.append(lsa(C))
+
+        return [
+            (
+                torch.as_tensor(i, dtype=torch.int64),
+                torch.as_tensor(j, dtype=torch.int64),
+            )
+            for i, j in indices
+        ]
 
 
 class MaskMatcher(nn.Module):
@@ -196,7 +216,7 @@ def batch_sigmoid_ce_cost(inputs: torch.Tensor, targets: torch.Tensor):
     Returns:
         Loss tensor
     """
-    hw = inputs.shape[1]
+    num_pts = inputs.shape[1]
 
     pos = F.binary_cross_entropy_with_logits(
         inputs, torch.ones_like(inputs), reduction="none"
@@ -209,9 +229,36 @@ def batch_sigmoid_ce_cost(inputs: torch.Tensor, targets: torch.Tensor):
         "nc,mc->nm", neg, (1 - targets)
     )
 
-    return loss / hw
+    return loss / num_pts
 
 
 batch_sigmoid_ce_cost_jit = torch.jit.script(
     batch_sigmoid_ce_cost
+)  # type: torch.jit.ScriptModule
+
+
+def batch_smooth_l1_cost(inputs: torch.Tensor, targets: torch.Tensor):
+    """
+    Args:
+        inputs: A float tensor of arbitrary shape.
+                The predictions for each example.
+        targets: A float tensor with the same shape as inputs.
+                Stores the regression target for each element in inputs.
+    Returns:
+        Loss tensor
+    """
+    num_pts = inputs.shape[1]
+    inputs = inputs.flatten(1)  # [num_queries, num_pts]
+    targets = targets.flatten(1)  # [num_targets, num_pts]
+    # compute the L1 loss between each prediction and target,
+    # get a [num_queries, num_targets] matrix
+    loss = F.smooth_l1_loss(inputs[:, None, :], targets[None, :, :], reduction="none")
+    # sum over the targets, and average
+    loss = loss.sum(-1) / num_pts
+
+    return loss
+
+
+batch_smooth_l1_cost_jit = torch.jit.script(
+    batch_smooth_l1_cost
 )  # type: torch.jit.ScriptModule

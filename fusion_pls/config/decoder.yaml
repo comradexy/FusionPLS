@@ -6,9 +6,8 @@ DECODER:
     DEC_BLOCKS: 3
     NUM_QUERIES: 100
     DETECTOR:
-        HIDDEN_DIM: 256
-        NHEADS: 8
-        DIM_FFN: 1024
+        NHEADS: 4
+        DIM_FFN: 512
         NUM_QUERIES: 50
 
 POS_ENC:

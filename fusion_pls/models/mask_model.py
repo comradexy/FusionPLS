@@ -2,9 +2,9 @@ import fusion_pls.utils.testing as testing
 import MinkowskiEngine as ME
 import torch
 import torch.nn.functional as F
-from fusion_pls.models.decoder import PanopticDecoder, DetectionTransformer
+from fusion_pls.models.decoder import PanopticDecoder, InstanceTransformer
 from fusion_pls.models.positional_encoder import PositionalEncoder
-from fusion_pls.models.loss import MaskLoss, DetLoss, SemLoss
+from fusion_pls.models.loss import MaskLoss, InstLoss, SemLoss
 from fusion_pls.models.mink import MinkEncoderDecoder
 from fusion_pls.models.backbone import FusionEncoder
 from fusion_pls.datasets.semantic_dataset import get_things_ids
@@ -31,7 +31,7 @@ class MaskPS(LightningModule):
         )
 
         self.mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
-        self.det_loss = DetLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
+        self.inst_loss = InstLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
         self.sem_loss = SemLoss(hparams.LOSS.SEM.WEIGHTS)
 
         self.evaluator = PanopticEvaluator(
@@ -48,12 +48,12 @@ class MaskPS(LightningModule):
         losses = {}
 
         mask_targets = {"classes": x["masks_cls"], "masks": x["masks"]}
-        loss_mask = self.mask_loss(outputs["pan_outputs"], mask_targets, x["masks_ids"], x["pt_coord"])
+        loss_mask = self.mask_loss(outputs["pan_outputs"], mask_targets, x["masks_ids"])
         losses.update(loss_mask)
 
-        det_targets = {"classes": x["things_cls"], "bboxes": x["things_bbox"]}
-        loss_det = self.det_loss(outputs["det_outputs"], det_targets)
-        losses.update(loss_det)
+        inst_targets = {"classes": x["things_cls"], "heatmaps": x["things_chm"]}
+        loss_inst = self.inst_loss(outputs["inst_outputs"], inst_targets, x["things_mask_ids"])
+        losses.update(loss_inst)
 
         sem_labels = [
             torch.from_numpy(i).type(torch.LongTensor).cuda() for i in x["sem_label"]

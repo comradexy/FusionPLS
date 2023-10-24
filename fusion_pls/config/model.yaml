@@ -19,9 +19,9 @@ MODEL:
     OVERLAP_THRESHOLD: 0.8
 
 LOSS:
-    DET:
-        WEIGHTS_KEYS: [ 'det_loss_ce', 'det_loss_bbox', 'det_loss_giou' ]
-        WEIGHTS: [ 1.0, 1.0, 1.0 ]
+    INST:
+        WEIGHTS_KEYS: [ 'inst_loss_ce', 'inst_loss_chm' ]
+        WEIGHTS: [ 1.0, 1.0 ]
     MASK:
         WEIGHTS_KEYS: ['pan_loss_ce','pan_loss_dice','pan_loss_mask']
         WEIGHTS: [ 2.0, 5.0, 5.0 ]

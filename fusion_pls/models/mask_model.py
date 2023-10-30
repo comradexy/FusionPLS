@@ -51,7 +51,7 @@ class MaskPS(LightningModule):
         loss_mask = self.mask_loss(outputs["pan_outputs"], mask_targets, x["masks_ids"])
         losses.update(loss_mask)
 
-        inst_targets = {"classes": x["things_cls"], "heatmaps": x["things_chm"]}
+        inst_targets = {"classes": x["things_cls"], "offsets": x["things_off"]}
         loss_inst = self.inst_loss(outputs["inst_outputs"], inst_targets, x["things_mask_ids"])
         losses.update(loss_inst)
 

@@ -184,13 +184,10 @@ class SemanticDataset(Dataset):
         xyz = points[:, :3]
         intensity = points[:, 3]
 
-        if self.cfg[self.dataset].IMAGE:
-            image = Image.open(
-                self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png"
-            )
-            image = np.array(image)
-        else:
-            image = np.array([])
+        image = Image.open(
+            self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png"
+        )
+        image = np.array(image)
 
         if len(intensity.shape) == 2:
             intensity = np.squeeze(intensity)
@@ -374,7 +371,7 @@ class MaskSemanticDataset(Dataset):
         ), f"not same number masks and classes: masks {masks.shape[0]}, classes {masks_cls.shape[0]} "
 
         # things center heat map
-        things_chm = np.zeros((len(things_masks), xyz.shape[0], 1))
+        things_off = np.zeros((len(things_masks), xyz.shape[0], 3))
         for i, mask in enumerate(things_masks):
             # get instance xyz
             _xyz = xyz[mask.astype(bool)]
@@ -382,14 +379,14 @@ class MaskSemanticDataset(Dataset):
             center = np.mean(_xyz, axis=0)
             offset = _xyz - center
             # normalize offset
-            max_x, max_y, max_z = np.max(_xyz, axis=0)
-            min_x, min_y, min_z = np.min(_xyz, axis=0)
-            inst_size = np.array([max_x - min_x, max_y - min_y, max_z - min_z])
-            offset = offset / inst_size
-            things_chm[i, ~mask.astype(bool)] = 0.0
-            things_chm[i, mask.astype(bool)] = 1 - np.linalg.norm(offset, axis=1).reshape(-1, 1)
+            max_x, max_y, max_z = np.max(offset, axis=0)
+            min_x, min_y, min_z = np.min(offset, axis=0)
+            offset = offset / np.array([max_x - min_x, max_y - min_y, max_z - min_z])
+            # things_chm[i, mask.astype(bool)] = 1 - np.linalg.norm(offset, axis=1).reshape(-1, 1)
+            # things_off[i, ~mask.astype(bool)] = 0.0
+            things_off[i, mask.astype(bool)] = offset
         things_cls = torch.from_numpy(things_cls)
-        things_chm = torch.from_numpy(things_chm)
+        things_off = torch.from_numpy(things_off)
 
         # Augmentations
         # xyz contains original points coordinates
@@ -407,7 +404,7 @@ class MaskSemanticDataset(Dataset):
             masks,
             masks_cls,
             masks_ids,
-            things_chm,
+            things_off,
             things_cls,
             things_masks_ids,
             fname,  # file path of pcd
@@ -429,7 +426,7 @@ class BatchCollation:
             "masks",
             "masks_cls",
             "masks_ids",
-            "things_chm",
+            "things_off",
             "things_cls",
             "things_mask_ids",
             "fname",

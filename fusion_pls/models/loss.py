@@ -315,7 +315,7 @@ class InstLoss(nn.Module):
 
         self.matcher = InstMatcher(
             cost_cls=cfg.INST.WEIGHTS[0],
-            cost_chm=cfg.INST.WEIGHTS[1],
+            cost_off=cfg.INST.WEIGHTS[1],
             p_ratio=cfg.P_RATIO,
         )
 
@@ -339,12 +339,14 @@ class InstLoss(nn.Module):
                 Parameters:
                      outputs: dict of tensors:
                          pred_logits: [B, Q, NClass+1]
-                         pred_heatmaps: [B, N_Pts, Q]
-                         aux_outputs: list of dicts ['pred_logits'], ['pred_heatmaps'] for each
-                                      intermediate output
+                         pred_off_x: [B, N_Pts, Q]
+                         pred_off_y: [B, N_Pts, Q]
+                         pred_off_z: [B, N_Pts, Q]
+                         aux_outputs: list of dicts ['pred_logits'], ['pred_off_x'], ['pred_off_y'],
+                                      ['pred_off_z'] for each intermediate output
                      targets: dict of lists len BS:
-                                  classes: [N_Heatmaps, 1], class for each GT center heatmap
-                                  heatmaps: [N_Heatmaps, N_Pts]
+                                  classes: [N_Things, 1], class for each GT center heatmap
+                                  offsets: [N_Things, N_Pts, 3]
                      masks_ids: [N_Masks] list of ids for each things_mask
                 """
         targ = targets
@@ -354,26 +356,26 @@ class InstLoss(nn.Module):
         indices = self.matcher(outputs_no_aux, targ)
 
         # Compute the average number of target boxes accross all nodes, for normalization purposes
-        num_heatmaps = sum(len(t) for t in targ["classes"])
-        num_heatmaps = torch.as_tensor(
-            [num_heatmaps], dtype=torch.float, device=next(iter(outputs.values())).device
+        num_inst = sum(len(t) for t in targ["classes"])
+        num_inst = torch.as_tensor(
+            [num_inst], dtype=torch.float, device=next(iter(outputs.values())).device
         )
         if is_dist_avail_and_initialized():
-            torch.distributed.all_reduce(num_heatmaps)
-        num_heatmaps = torch.clamp(num_heatmaps / get_world_size(), min=1).item()
+            torch.distributed.all_reduce(num_inst)
+        num_inst = torch.clamp(num_inst / get_world_size(), min=1).item()
 
         # Compute all the requested losses
         losses = {}
-        losses.update(
-            self.get_losses(outputs, targ, indices, num_heatmaps, masks_ids)
-        )
+        # losses.update(
+        #     self.get_losses(outputs, targ, indices, num_heatmaps, masks_ids)
+        # )
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
                 indices = self.matcher(aux_outputs, targ)
                 l_dict = self.get_losses(
-                    aux_outputs, targ, indices, num_heatmaps, masks_ids
+                    aux_outputs, targ, indices, num_inst, masks_ids
                 )
                 l_dict = {f"{i}_" + k: v for k, v in l_dict.items()}
                 losses.update(l_dict)
@@ -387,13 +389,13 @@ class InstLoss(nn.Module):
 
         return losses
 
-    def get_losses(self, outputs, targets, indices, num_heatmaps, mask_ids, do_cls=True):
+    def get_losses(self, outputs, targets, indices, num_ints, mask_ids, do_cls=True):
         if do_cls:
             classes = self.loss_classes(outputs, targets, indices)
         else:
             classes = {}
-        heatmaps = self.loss_heatmaps(outputs, targets, indices, num_heatmaps, mask_ids)
-        classes.update(heatmaps)
+        offsets = self.loss_offsets(outputs, targets, indices, num_ints, mask_ids)
+        classes.update(offsets)
         return classes
 
     def loss_classes(self, outputs, targets, indices):
@@ -426,39 +428,83 @@ class InstLoss(nn.Module):
         losses = {"inst_loss_ce": loss_ce}
         return losses
 
-    def loss_heatmaps(self, outputs, targets, indices, num_heatmaps, masks_ids):
+    def loss_offsets(self, outputs, targets, indices, num_inst, masks_ids):
         """Compute the losses related to the heatmaps."""
-        assert "pred_heatmaps" in outputs
+        assert "pred_off_x" in outputs
+        assert "pred_off_y" in outputs
+        assert "pred_off_z" in outputs
 
-        heatmaps = [t for t in targets["heatmaps"]]
-        n_heatmaps = [hm.shape[0] for hm in heatmaps]
-        target_heatmaps = pad_stack(heatmaps)
+        offsets_x = [t[..., 0] for t in targets["offsets"]]
+        offsets_y = [t[..., 1] for t in targets["offsets"]]
+        offsets_z = [t[..., 2] for t in targets["offsets"]]
+        n_inst = [hm.shape[0] for hm in offsets_x]
+        target_off_x = pad_stack(offsets_x)
+        target_off_y = pad_stack(offsets_y)
+        target_off_z = pad_stack(offsets_z)
 
-        if target_heatmaps.shape[0] == 0:
-            return {"inst_loss_chm": 0.0}
+        if target_off_x.shape[0] == 0:
+            return {"inst_loss_off": 0.0}
 
         pred_idx = _get_pred_permutation_idx(indices)
-        tgt_idx = _get_tgt_permutation_idx(indices, n_heatmaps)
-        pred_heatmaps = outputs["pred_heatmaps"]
-        pred_heatmaps = pred_heatmaps[pred_idx[0], :, pred_idx[1]]
-        target_heatmaps = target_heatmaps.to(pred_heatmaps)
-        target_heatmaps = target_heatmaps[tgt_idx]
+        tgt_idx = _get_tgt_permutation_idx(indices, n_inst)
+
+        pred_off_x = outputs["pred_off_x"]
+        pred_off_y = outputs["pred_off_y"]
+        pred_off_z = outputs["pred_off_z"]
+
+        pred_off_x = pred_off_x[pred_idx[0], :, pred_idx[1]]
+        pred_off_y = pred_off_y[pred_idx[0], :, pred_idx[1]]
+        pred_off_z = pred_off_z[pred_idx[0], :, pred_idx[1]]
+
+        target_off_x = target_off_x.to(pred_off_x)
+        target_off_y = target_off_y.to(pred_off_y)
+        target_off_z = target_off_z.to(pred_off_z)
+
+        target_off_x = target_off_x[tgt_idx]
+        target_off_y = target_off_y[tgt_idx]
+        target_off_z = target_off_z[tgt_idx]
 
         with torch.no_grad():
-            idx = sample_points(heatmaps, masks_ids, self.n_mask_pts, self.num_points)
-            n_heatmaps.insert(0, 0)
-            nm = torch.cumsum(torch.tensor(n_heatmaps), 0)
-            point_labels = torch.cat(
-                [target_heatmaps[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+            idx = sample_points(offsets_x, masks_ids, self.n_mask_pts, self.num_points)
+            n_inst.insert(0, 0)
+            nm = torch.cumsum(torch.tensor(n_inst), 0)
+            lab_off_x = torch.cat(
+                [target_off_x[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
             )
-        point_logits = torch.cat(
-            [pred_heatmaps[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+            lab_off_y = torch.cat(
+                [target_off_y[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+            )
+            lab_off_z = torch.cat(
+                [target_off_z[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+            )
+            # lab_off_x = target_off_x.clone()
+            # lab_off_y = target_off_y.clone()
+            # lab_off_z = target_off_z.clone()
+        out_off_x = torch.cat(
+            [pred_off_x[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
         )
+        out_off_y = torch.cat(
+            [pred_off_y[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+        )
+        out_off_z = torch.cat(
+            [pred_off_z[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+        )
+        # out_off_x = pred_off_x.clone()
+        # out_off_y = pred_off_y.clone()
+        # out_off_z = pred_off_z.clone()
 
-        del pred_heatmaps
-        del target_heatmaps
+        del pred_off_x
+        del pred_off_y
+        del pred_off_z
+        del target_off_x
+        del target_off_y
+        del target_off_z
 
-        losses = {"inst_loss_chm": smooth_l1_cost(point_logits, point_labels, num_heatmaps)}
+        loss_off_x = smooth_l1_cost(out_off_x, lab_off_x)
+        loss_off_y = smooth_l1_cost(out_off_y, lab_off_y)
+        loss_off_z = smooth_l1_cost(out_off_z, lab_off_z)
+
+        losses = {"inst_loss_off": loss_off_x + loss_off_y + loss_off_z}
 
         return losses
 
@@ -531,21 +577,21 @@ def sigmoid_ce_loss(inputs: torch.Tensor, targets: torch.Tensor, num_masks: floa
 sigmoid_ce_loss_jit = torch.jit.script(sigmoid_ce_loss)  # type: torch.jit.ScriptModule
 
 
-def smooth_l1_cost(inputs: torch.Tensor, targets: torch.Tensor, num_heatmaps: float):
+def smooth_l1_cost(inputs: torch.Tensor, targets: torch.Tensor):
     """
     Args:
         inputs: A float tensor of arbitrary shape.
                 The predictions for each example.
         targets: A float tensor with the same shape as inputs.
                 Stores the regression target for each element in inputs.
-        num_heatmaps: Number of heatmaps.
     Returns:
         Loss tensor
     """
     inputs = inputs.flatten(1)
     targets = targets.flatten(1)
-    loss = F.smooth_l1_loss(inputs, targets, reduction="none")
-    loss = loss.mean(1).sum() / num_heatmaps
+    # loss = F.smooth_l1_loss(inputs, targets, reduction="none")
+    loss = F.l1_loss(inputs, targets, reduction="none")
+    loss = loss.mean()
 
     return loss
 

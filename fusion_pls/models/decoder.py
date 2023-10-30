@@ -29,6 +29,8 @@ class PanopticDecoder(nn.Module):
 
         self.decoder_norm = nn.LayerNorm(self.hidden_dim)
 
+        self.query_feat_things = nn.Embedding(self.num_queries_things, self.hidden_dim)
+        self.query_embed_things = nn.Embedding(self.num_queries_things, self.hidden_dim)
         self.query_feat = nn.Embedding(self.num_queries, self.hidden_dim)
         self.query_embed = nn.Embedding(self.num_queries, self.hidden_dim)
 
@@ -61,7 +63,19 @@ class PanopticDecoder(nn.Module):
             self.hidden_dim,
             data_cfg.NUM_THING_CLASSES + 1,
         )
-        self.chm_embed = blocks.MLP(
+        self.off_x_embed = blocks.MLP(
+            self.hidden_dim,
+            self.hidden_dim,
+            self.hidden_dim,
+            3,
+        )
+        self.off_y_embed = blocks.MLP(
+            self.hidden_dim,
+            self.hidden_dim,
+            self.hidden_dim,
+            3,
+        )
+        self.off_z_embed = blocks.MLP(
             self.hidden_dim,
             self.hidden_dim,
             self.hidden_dim,
@@ -85,33 +99,39 @@ class PanopticDecoder(nn.Module):
             src.append(feat)
 
         bs = src[0].shape[0]
+        query_things = self.query_feat_things.weight.unsqueeze(0).repeat(bs, 1, 1)
+        query_pos_things = self.query_embed_things.weight.unsqueeze(0).repeat(bs, 1, 1)
         query = self.query_feat.weight.unsqueeze(0).repeat(bs, 1, 1)
         query_pos = self.query_embed.weight.unsqueeze(0).repeat(bs, 1, 1)
 
         pred_class_panoptic = []
         pred_mask_panoptic = []
         pred_class_things = []
-        pred_chm_things = []
+        pred_off_x_things = []
+        pred_off_y_things = []
+        pred_off_z_things = []
         for i in range(self.num_layers):
             level_index = i % self.num_feat_levels
 
             # instance center heatmap prediction
-            outputs_class_things, outputs_chm = self.inst_pred_heads(
-                query[:, : self.num_queries_things],
+            outputs_class_things, outputs_off_x, outputs_off_y, outputs_off_z = self.inst_pred_heads(
+                query_things,
                 mask_feats,
             )
             query_things = self.det_decoder[i](
-                query[:, :self.num_queries_things],
+                query_things,
                 src[level_index],
                 pos=coors[level_index],
                 pad_mask=pad_masks[level_index],
-                query_pos=query_pos[:, : self.num_queries_things],
+                query_pos=query_pos_things,
             )
-            query_things += query[:, :self.num_queries_things]
-            query = torch.cat((query_things, query[:, self.num_queries_things:]), dim=1)
+            # embed things query to panoptic query
+            query[:, :self.num_queries_things] += query_things
             # save detection outputs
             pred_class_things.append(outputs_class_things)
-            pred_chm_things.append(outputs_chm)
+            pred_off_x_things.append(outputs_off_x)
+            pred_off_y_things.append(outputs_off_y)
+            pred_off_z_things.append(outputs_off_z)
 
             # segmentation
             outputs_class, outputs_mask, attn_mask = self.mask_pred_heads(
@@ -134,8 +154,8 @@ class PanopticDecoder(nn.Module):
             pred_mask_panoptic.append(outputs_mask)
 
         # final prediction
-        outputs_class_things, outputs_chm = self.inst_pred_heads(
-            query[:, : self.num_queries_things],
+        outputs_class_things, outputs_off_x, outputs_off_y, outputs_off_z = self.inst_pred_heads(
+            query_things,
             mask_feats,
         )
         outputs_class, outputs_mask, attn_mask = self.mask_pred_heads(
@@ -144,7 +164,9 @@ class PanopticDecoder(nn.Module):
             pad_mask=last_pad,
         )
         pred_class_things.append(outputs_class_things)
-        pred_chm_things.append(outputs_chm)
+        pred_off_x_things.append(outputs_off_x)
+        pred_off_y_things.append(outputs_off_y)
+        pred_off_z_things.append(outputs_off_z)
         pred_class_panoptic.append(outputs_class)
         pred_mask_panoptic.append(outputs_mask)
 
@@ -152,17 +174,19 @@ class PanopticDecoder(nn.Module):
 
         inst_out = {
             "pred_logits": pred_class_things[-1],
-            "pred_heatmaps": pred_chm_things[-1],
-            "aux_outputs": self.set_aux(pred_class_things,
-                                        pred_chm_things,
-                                        mode="chm")
+            "pred_off_x": pred_off_x_things[-1],
+            "pred_off_y": pred_off_y_things[-1],
+            "pred_off_z": pred_off_z_things[-1],
+            "aux_outputs": self.set_aux_inst(pred_class_things,
+                                             pred_off_x_things,
+                                             pred_off_y_things,
+                                             pred_off_z_things)
         }
         pan_out = {
             "pred_logits": pred_class_panoptic[-1],
             "pred_masks": pred_mask_panoptic[-1],
-            "aux_outputs": self.set_aux(pred_class_panoptic,
-                                        pred_mask_panoptic,
-                                        mode="mask")
+            "aux_outputs": self.set_aux_pan(pred_class_panoptic,
+                                            pred_mask_panoptic)
         }
         out = {
             "inst_outputs": inst_out,
@@ -196,29 +220,34 @@ class PanopticDecoder(nn.Module):
     def inst_pred_heads(self, output, features):
         decoder_output = self.decoder_norm(output)
         outputs_class = self.cls_pred_inst(decoder_output)
-        chm_embed = self.chm_embed(decoder_output)
-        outputs_chm = torch.einsum("bqc,bpc->bpq", chm_embed, features)
-        outputs_chm = outputs_chm.sigmoid()
+        off_x_embed = self.off_x_embed(decoder_output)
+        off_y_embed = self.off_y_embed(decoder_output)
+        off_z_embed = self.off_z_embed(decoder_output)
+        outputs_off_x = torch.einsum("bqc,bpc->bpq", off_x_embed, features)
+        outputs_off_y = torch.einsum("bqc,bpc->bpq", off_y_embed, features)
+        outputs_off_z = torch.einsum("bqc,bpc->bpq", off_z_embed, features)
 
-        return outputs_class, outputs_chm
+        return outputs_class, outputs_off_x, outputs_off_y, outputs_off_z
 
     @torch.jit.unused
-    def set_aux(self, outputs_class, outputs_obj, mode="mask"):
+    def set_aux_pan(self, outputs_class, outputs_mask):
         # this is a workaround to make torchscript happy, as torchscript
         # doesn't support dictionary with non-homogeneous values, such
         # as a dict having both a Tensor and a list.
-        if mode == "mask":
-            return [
-                {"pred_logits": a, "pred_masks": b}
-                for a, b in zip(outputs_class[:-1], outputs_obj[:-1])
-            ]
-        elif mode == "chm":
-            return [
-                {"pred_logits": a, "pred_heatmaps": b}
-                for a, b in zip(outputs_class[:-1], outputs_obj[:-1])
-            ]
-        else:
-            raise NotImplementedError(f"mode {mode} not supported")
+        return [
+            {"pred_logits": a, "pred_masks": b}
+            for a, b in zip(outputs_class[:-1], outputs_mask[:-1])
+        ]
+
+    @torch.jit.unused
+    def set_aux_inst(self, outputs_class, outputs_off_x, outputs_off_y, outputs_off_z):
+        # this is a workaround to make torchscript happy, as torchscript
+        # doesn't support dictionary with non-homogeneous values, such
+        # as a dict having both a Tensor and a list.
+        return [
+            {"pred_logits": a, "pred_off_x": b, "pred_off_y": c, "pred_off_z": d}
+            for a, b, c, d in zip(outputs_class[:-1], outputs_off_x[:-1], outputs_off_y[:-1], outputs_off_z[:-1])
+        ]
 
 
 class InstanceTransformer(nn.Module):

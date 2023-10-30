@@ -18,7 +18,7 @@ class InstMatcher(nn.Module):
         while the others are un-matched (and thus treated as non-objects).
         """
 
-    def __init__(self, cost_cls: float = 1, cost_chm: float = 1, p_ratio: float = 0.4):
+    def __init__(self, cost_cls: float = 1, cost_off: float = 1, p_ratio: float = 0.4):
         """Creates the matcher
 
         Params:
@@ -27,33 +27,14 @@ class InstMatcher(nn.Module):
         """
         super().__init__()
         self.weight_cls = cost_cls
-        self.weight_chm = cost_chm
+        self.weight_off = cost_off
 
-        assert cost_cls != 0 or cost_chm != 0, "all costs cant be 0"
+        assert cost_cls != 0 or cost_off != 0, "all costs cant be 0"
 
         self.p_ratio = p_ratio
 
     @torch.no_grad()
     def forward(self, outputs, targets):
-        """ Performs the matching
-
-        Params:
-            outputs: This is a dict that contains at least these entries:
-                 "pred_logits": Tensor of dim [batch_size, num_queries, num_classes] with the classification logits
-                 "pred_heatmaps": Tensor of dim [batch_size, num_queries, num_pts] with the predicted center heatmap
-
-            targets: This is a list of targets (len(targets) = batch_size), where each target is a dict containing:
-                 "classes": Tensor of dim [num_target_boxes] (where num_target_boxes is the number of ground-truth
-                           objects in the target) containing the class labels
-                 "heatmaps": Tensor of dim [num_pts, num_target_heatmaps] containing the target center heatmap
-
-        Returns:
-            A list of size batch_size, containing tuples of (index_i, index_j) where:
-                - index_i is the indices of the selected predictions (in order)
-                - index_j is the indices of the corresponding selected targets (in order)
-            For each batch element, it holds:
-                len(index_i) = len(index_j) = min(num_queries, num_target_heatmaps)
-        """
         return self.memory_efficient_forward(outputs, targets)
 
     @torch.no_grad()
@@ -69,9 +50,12 @@ class InstMatcher(nn.Module):
 
             cost_class = -out_prob[:, tgt_ids]
 
-            out_chm = outputs["pred_heatmaps"][b].permute(1, 0)  # [num_queries, num_pts]
-            tgt_chm = targets["heatmaps"][b].to(out_chm)
-            n_pts_scan = tgt_chm.shape[1]
+            out_off_x = outputs["pred_off_x"][b].permute(1, 0)  # [num_queries, num_pts]
+            out_off_y = outputs["pred_off_y"][b].permute(1, 0)
+            out_off_z = outputs["pred_off_z"][b].permute(1, 0)
+
+            tgt_offset = targets["offsets"][b].to(out_off_x)
+            n_pts_scan = tgt_offset.shape[1]
 
             # all heatmaps share the same set of points for efficient matching!
             pt_idx = torch.randint(
@@ -79,17 +63,25 @@ class InstMatcher(nn.Module):
             ).squeeze(1)
 
             # get gt labels
-            tgt_chm = tgt_chm[:, pt_idx]
-            out_chm = out_chm[:, pt_idx]
+            tgt_offset = tgt_offset[:, pt_idx]
+            tgt_off_x = tgt_offset[:, :, 0]
+            tgt_off_y = tgt_offset[:, :, 1]
+            tgt_off_z = tgt_offset[:, :, 2]
+            out_off_x = out_off_x[:, pt_idx]
+            out_off_y = out_off_y[:, pt_idx]
+            out_off_z = out_off_z[:, pt_idx]
 
             with autocast(enabled=False):
-                out_chm = out_chm.float()  # [num_q,num_pts]
-                tgt_chm = tgt_chm.float()  # [n_ins,num_pts]
-                cost_chm = batch_smooth_l1_cost(out_chm, tgt_chm)
+                out_off_x = out_off_x.float()  # [num_q,num_pts]
+                tgt_off_x = tgt_off_x.float()  # [n_ins,num_pts]
+                cost_off_x = batch_smooth_l1_cost(out_off_x, tgt_off_x)
+                cost_off_y = batch_smooth_l1_cost(out_off_y, tgt_off_y)
+                cost_off_z = batch_smooth_l1_cost(out_off_z, tgt_off_z)
+                cost_offset = cost_off_x + cost_off_y + cost_off_z
 
             # Final cost matrix
             C = (
-                    self.weight_chm * cost_chm
+                    self.weight_off * cost_offset
                     + self.weight_cls * cost_class
             )
             C = C.reshape(num_queries, -1).cpu()
@@ -252,7 +244,8 @@ def batch_smooth_l1_cost(inputs: torch.Tensor, targets: torch.Tensor):
     targets = targets.flatten(1)  # [num_targets, num_pts]
     # compute the L1 loss between each prediction and target,
     # get a [num_queries, num_targets] matrix
-    loss = F.smooth_l1_loss(inputs[:, None, :], targets[None, :, :], reduction="none")
+    # loss = F.smooth_l1_loss(inputs[:, None, :], targets[None, :, :], reduction="none")
+    loss = F.l1_loss(inputs[:, None, :], targets[None, :, :], reduction="none")
     # sum over the targets, and average
     loss = loss.sum(-1) / num_pts
 

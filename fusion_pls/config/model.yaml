@@ -20,13 +20,13 @@ MODEL:
 
 LOSS:
     INST:
-        WEIGHTS_KEYS: [ 'inst_loss_ce', 'inst_loss_chm' ]
-        WEIGHTS: [ 1.0, 1.0 ]
+        WEIGHTS_KEYS: [ 'inst_loss_ce', 'inst_loss_off' ]
+        WEIGHTS: [ 1.0, 5.0 ]
     MASK:
         WEIGHTS_KEYS: ['pan_loss_ce','pan_loss_dice','pan_loss_mask']
         WEIGHTS: [ 2.0, 5.0, 5.0 ]
     SEM:
-        WEIGHTS: [ 2, 6 ] #Ce, Lovasz
+        WEIGHTS: [ 2.0, 6.0 ] #Ce, Lovasz
     EOS_COEF: 0.1
     NUM_POINTS: 50000
     NUM_MASK_PTS: 500 # points to sample within each mask
@@ -42,7 +42,6 @@ KITTI:
     SPACE: # coord limits
         [[-48.0,48.0],[-48.0,48.0],[-4.0,1.5]]
     SUB_NUM_POINTS: 80000
-    IMAGE: True  # whether to load image_2
 
 NUSCENES:
     PATH: data/nuscenes
@@ -54,4 +53,3 @@ NUSCENES:
     SPACE: # coord limits
         [[-50.0,50.0],[-50.0,50.0],[-5.0,3]]
     SUB_NUM_POINTS: 50000
-    IMAGE: True  # whether to load image_2

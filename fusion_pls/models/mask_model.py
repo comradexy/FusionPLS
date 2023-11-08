@@ -3,7 +3,7 @@ import MinkowskiEngine as ME
 import torch
 import torch.nn.functional as F
 from fusion_pls.models.decoder import PanopticDecoder, InstanceTransformer
-from fusion_pls.models.positional_encoder import PositionalEncoder
+from fusion_pls.models.pos_enc import PositionalEncoder
 from fusion_pls.models.loss import MaskLoss, InstLoss, SemLoss
 from fusion_pls.models.mink import MinkEncoderDecoder
 from fusion_pls.models.backbone import FusionEncoder
@@ -12,7 +12,7 @@ from fusion_pls.utils.evaluate_panoptic import PanopticEvaluator
 from pytorch_lightning.core.lightning import LightningModule
 
 
-class MaskPS(LightningModule):
+class FusionLPS(LightningModule):
     def __init__(self, hparams):
         super().__init__()
         self.save_hyperparameters(dict(hparams))

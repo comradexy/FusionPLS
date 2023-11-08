@@ -11,10 +11,8 @@ class MinkEncoderDecoder(nn.Module):
     ResNet-like architecture using sparse convolutions
     """
 
-    def __init__(self, cfg: object, data_cfg: object) -> object:
+    def __init__(self, cfg: object) -> object:
         super().__init__()
-
-        n_classes = data_cfg.NUM_CLASSES
 
         self.input_dim = cfg.INPUT_DIM
         self.modality = cfg.MODALITY

@@ -9,7 +9,7 @@ import torch
 import yaml
 from easydict import EasyDict as edict
 from fusion_pls.datasets.semantic_dataset import SemanticDatasetModule
-from fusion_pls.models.mask_model import MaskPS
+from fusion_pls.models.mask_model import FusionLPS
 from pytorch_lightning import Trainer
 from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.callbacks import Callback, LearningRateMonitor, ModelCheckpoint
@@ -43,7 +43,7 @@ def main(name, version, ckpt, weights, data_path, nuscenes):
             cfg.KITTI.PATH = data_path
 
     data = SemanticDatasetModule(cfg)
-    model = MaskPS(cfg)
+    model = FusionLPS(cfg)
 
     if weights is not None:
         weights = torch.load(weights, map_location="cpu")

@@ -13,9 +13,8 @@ from tqdm import tqdm
 from easydict import EasyDict as edict
 from fusion_pls.utils.interpolate import knn_up
 from fusion_pls.models.mink import MinkEncoderDecoder
-from fusion_pls.models.color_encoder import ColorPointEncoder
 from fusion_pls.models.backbone import FusionEncoder
-from fusion_pls.models.mask_model import MaskPS
+from fusion_pls.models.mask_model import FusionLPS
 from fusion_pls.datasets.semantic_dataset import SemanticDatasetModule
 
 

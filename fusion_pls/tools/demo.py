@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 from easydict import EasyDict as edict
 from fusion_pls.datasets.semantic_dataset import SemanticDatasetModule
-from fusion_pls.models.mask_model import MaskPS
+from fusion_pls.models.mask_model import FusionLPS
 from pytorch_lightning import Trainer
 
 
@@ -44,7 +44,7 @@ def main(save, ckpt, dataset, sequence, frame):
         cfg.KITTI.CONFIG = "../datasets/semantic-kitti.yaml"
 
     sample = SampleLoader(dataset, sequence, frame)
-    model = MaskPS(cfg)
+    model = FusionLPS(cfg)
     weights = torch.load(ckpt, map_location="cpu")
     model.load_state_dict(weights["state_dict"])
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

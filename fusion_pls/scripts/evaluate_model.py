@@ -6,7 +6,7 @@ import torch
 import yaml
 from easydict import EasyDict as edict
 from fusion_pls.datasets.semantic_dataset import SemanticDatasetModule
-from fusion_pls.models.mask_model import MaskPS
+from fusion_pls.models.mask_model import FusionLPS
 from pytorch_lightning import Trainer
 
 
@@ -50,7 +50,7 @@ def main(w, save_testset, nuscenes, data_path):
             cfg.KITTI.PATH = data_path
 
     data = SemanticDatasetModule(cfg)
-    model = MaskPS(cfg)
+    model = FusionLPS(cfg)
     w = torch.load(w, map_location="cpu")
     model.load_state_dict(w["state_dict"])
 

@@ -2,11 +2,11 @@ import numpy as np
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
+import torchvision.models as models
 
 from typing import Optional
-from fusion_pls.models.color_encoder import ColorPointEncoder
 from fusion_pls.models.mink import MinkEncoderDecoder
-from fusion_pls.models.positional_encoder import PositionalEncoder
+from fusion_pls.models.pos_enc import PositionalEncoder
 import fusion_pls.models.blocks as blocks
 
 
@@ -21,12 +21,12 @@ class FusionEncoder(nn.Module):
         # init raw pts encoder
         cfg.PCD.CHANNELS = cfg.CHANNELS
         cfg.PCD.KNN_UP = cfg.KNN_UP
-        self.pcd_enc = MinkEncoderDecoder(cfg.PCD, data_cfg)
+        self.pcd_enc = MinkEncoderDecoder(cfg.PCD)
 
         # init img_to_pcd pts encoder
         cfg.IMG.CHANNELS = cfg.CHANNELS
         cfg.IMG.KNN_UP = cfg.KNN_UP
-        self.img_enc = MinkEncoderDecoder(cfg.IMG, data_cfg)
+        self.img_enc = MinkEncoderDecoder(cfg.IMG)
 
         # init fusion encoder
         self.n_levels = cfg.FUSION.N_LEVELS
@@ -52,12 +52,12 @@ class FusionEncoder(nn.Module):
                 )
             )
 
-        sem_head_pcd_in_dim = cfg.CHANNELS[-1]
-        sem_head_img_in_dim = cfg.CHANNELS[-1]
+        # sem_head_pcd_in_dim = cfg.CHANNELS[-1]
+        # sem_head_img_in_dim = cfg.CHANNELS[-1]
         sem_head_in_dim = self.out_dim[-1]
-        self.sem_head_pcd = nn.Linear(sem_head_pcd_in_dim, 20)
-        self.sem_head_img = nn.Linear(sem_head_img_in_dim, 20)
-        self.sem_head = nn.Linear(sem_head_in_dim, 20)
+        # self.sem_head_pcd = nn.Linear(sem_head_pcd_in_dim, data_cfg.NUM_CLASSES)
+        # self.sem_head_img = nn.Linear(sem_head_img_in_dim, data_cfg.NUM_CLASSES)
+        self.sem_head = nn.Linear(sem_head_in_dim, data_cfg.NUM_CLASSES)
 
     def forward(self, x):
         camera_fov_mask = [torch.from_numpy(ind).bool().cuda() for ind in x["uvrgb_ind"]]
@@ -180,3 +180,10 @@ class AutoWeightedFeatureFusion(nn.Module):
         fused_feats = fused_feats
 
         return fused_feats
+
+
+class ImgEncoderDecoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.backbone = models.resnet50(pretrained=True)

@@ -29,6 +29,7 @@ class FusionLPS(LightningModule):
             hparams.DECODER,
             hparams[hparams.MODEL.DATASET],
         )
+        self.enable_detector = hparams.DECODER.DETECTOR.ENABLE
 
         self.mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
         self.inst_loss = InstLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
@@ -44,21 +45,30 @@ class FusionLPS(LightningModule):
         outputs, padding = self.decoder(feats, encoded_pos, pad_masks)
         return outputs, padding, bb_logits
 
-    def getLoss(self, x, outputs, padding, bb_logits):
+    def get_loss(self, x, outputs, padding, bb_logits):
         losses = {}
 
-        mask_targets = {"classes": x["masks_cls"], "masks": x["masks"]}
-        loss_mask = self.mask_loss(outputs["pan_outputs"], mask_targets, x["masks_ids"])
-        losses.update(loss_mask)
-
-        inst_targets = {"classes": x["things_cls"], "offsets": x["things_off"]}
-        loss_inst = self.inst_loss(outputs["inst_outputs"], inst_targets, x["things_mask_ids"])
-        losses.update(loss_inst)
-
+        dec_labels = x["dec_lab_icf"]
+        # sem_labels = [
+        #     torch.from_numpy(i).type(torch.LongTensor).cuda() for i in x["sem_label"]
+        # ]
         sem_labels = [
-            torch.from_numpy(i).type(torch.LongTensor).cuda() for i in x["sem_label"]
+            torch.from_numpy(s[i]).type(torch.LongTensor).cuda() for s, i in zip(x["sem_label"], x["indices"])
         ]
         sem_labels = torch.cat([s.squeeze(1) for s in sem_labels], dim=0)
+
+        # calculate mask loss
+        mask_targets = {"classes": dec_labels["masks_cls"], "masks": dec_labels["masks"]}
+        loss_mask = self.mask_loss(outputs["pan_outputs"], mask_targets, dec_labels["masks_ids"])
+        losses.update(loss_mask)
+
+        # calculate instance loss
+        if self.enable_detector:
+            inst_targets = {"classes": dec_labels["things_cls"], "offsets": dec_labels["things_off"]}
+            loss_inst = self.inst_loss(outputs["inst_outputs"], inst_targets, dec_labels["things_mask_ids"])
+            losses.update(loss_inst)
+
+        # calculate semantic loss
         bb_logits = bb_logits[~padding]
         loss_sem_bb = self.sem_loss(bb_logits, sem_labels)
         losses.update(loss_sem_bb)
@@ -67,7 +77,7 @@ class FusionLPS(LightningModule):
 
     def training_step(self, x: dict, idx):
         outputs, padding, bb_logits = self.forward(x)
-        loss_dict = self.getLoss(x, outputs, padding, bb_logits)
+        loss_dict = self.get_loss(x, outputs, padding, bb_logits)
         for k, v in loss_dict.items():
             self.log(f"train/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
         total_loss = sum(loss_dict.values())
@@ -82,7 +92,7 @@ class FusionLPS(LightningModule):
             return
 
         outputs, padding, bb_logits = self.forward(x)
-        loss_dict = self.getLoss(x, outputs, padding, bb_logits)
+        loss_dict = self.get_loss(x, outputs, padding, bb_logits)
         for k, v in loss_dict.items():
             self.log(f"val/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
         total_loss = sum(loss_dict.values())
@@ -122,10 +132,8 @@ class FusionLPS(LightningModule):
         if "RESULTS_DIR" in self.cfg:
             results_dir = self.cfg.RESULTS_DIR
             class_inv_lut = self.evaluator.get_class_inv_lut()
-            # dt = self.cfg[self.cfg.MODEL.DATASET]
-            dt = self.cfg.MODEL.DATASET
             testing.save_results(
-                sem_pred, ins_pred, results_dir, x, class_inv_lut, x["token"], dt
+                sem_pred, ins_pred, results_dir, x, class_inv_lut,
             )
         torch.cuda.empty_cache()
 

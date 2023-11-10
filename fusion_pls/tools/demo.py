@@ -104,7 +104,6 @@ def SampleLoader(dataset, sequence, frame):
         "fname": [pts_path.replace("velodyne_fov_multi", "velodyne")],
         "calib": [calib],
         "pose": [pose],
-        "token": [],
     }
 
     return sample

@@ -168,28 +168,16 @@ class MinkEncoderDecoder(nn.Module):
         input batch
         The coordinates are quantized using the provided resolution
         """
-        if self.modality == "xyzi" and self.input_dim == 4:
-            feats = x["feats"]
-            coords = [f[:, :3] for f in x["feats"]]
-        elif self.modality == "uvrgb" and self.input_dim == 5:
-            feats = x["uvrgb"]
-            coords = [f[ind][:, :3] for f, ind in zip(x["feats"], x["uvrgb_ind"])]
-        elif self.modality == "rgb" and self.input_dim == 3:
-            feats = [f[:, -3:] for f in x["uvrgb"]]
-            coords = [f[ind][:, :3] for f, ind in zip(x["feats"], x["uvrgb_ind"])]
-        # elif self.modality == "uvdrgb" and self.input_dim == 6:
-        #     depth = [np.linalg.norm(f[:, :2], axis=1, keepdims=True) for f in x["feats"]]
-        #     feats = [np.concatenate([f[:, 4:6], d, f[:, -3:]], axis=1) for f, d in zip(x["feats"], depth)]
-        else:
-            raise Exception(
-                f"modality '{self.modality}' with input_dim {self.input_dim} not supported"
-            )
+        feats = x
+        coords = [f[:, :3] for f in x]
+
         # get batched features
         features = torch.from_numpy(np.concatenate(feats, 0)).float()
         # get batched coordinates
         coordinates = ME.utils.batched_coordinates(
             [i / self.res for i in coords], dtype=torch.float32
         )
+
         # create tensor field
         feat_tfield = ME.TensorField(
             features=features,
@@ -198,6 +186,7 @@ class MinkEncoderDecoder(nn.Module):
             minkowski_algorithm=ME.MinkowskiAlgorithm.SPEED_OPTIMIZED,
             device="cuda",
         )
+
         return feat_tfield
 
     def pad_batch(self, coors, feats):

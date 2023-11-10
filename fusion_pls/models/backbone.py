@@ -6,27 +6,29 @@ import torchvision.models as models
 
 from typing import Optional
 from fusion_pls.models.mink import MinkEncoderDecoder
+from fusion_pls.models.resnet import ResNetEncoderDecoder
 from fusion_pls.models.pos_enc import PositionalEncoder
 import fusion_pls.models.blocks as blocks
 
 
+# todo: add pcd encoder
+class PCDEncoder(nn.Module):
+    pass
+
+
 class FusionEncoder(nn.Module):
     """
-    Fuse mono and early-fused pts features
+    Fuse pcd and img features
     """
 
-    def __init__(self, cfg: object, data_cfg: object) -> object:
+    def __init__(self, cfg: object, data_cfg: object):
         super().__init__()
 
         # init raw pts encoder
-        cfg.PCD.CHANNELS = cfg.CHANNELS
-        cfg.PCD.KNN_UP = cfg.KNN_UP
         self.pcd_enc = MinkEncoderDecoder(cfg.PCD)
 
         # init img_to_pcd pts encoder
-        cfg.IMG.CHANNELS = cfg.CHANNELS
-        cfg.IMG.KNN_UP = cfg.KNN_UP
-        self.img_enc = MinkEncoderDecoder(cfg.IMG)
+        self.img_enc = ResNetEncoderDecoder(cfg.IMG)
 
         # init fusion encoder
         self.n_levels = cfg.FUSION.N_LEVELS
@@ -35,10 +37,17 @@ class FusionEncoder(nn.Module):
             self.out_dim = [cfg.FUSION.OUT_DIM] * self.n_levels
         self.pcd_out_dim = cfg.PCD.CHANNELS[-self.n_levels:]
         self.img_out_dim = cfg.IMG.CHANNELS[-self.n_levels:]
-        self.feats_proj = nn.ModuleList()
+        self.pcd_feats_proj = nn.ModuleList()
+        self.img_feats_proj = nn.ModuleList()
         self.fusion = nn.ModuleList()
         for level in range(self.n_levels):
-            self.feats_proj.append(
+            self.pcd_feats_proj.append(
+                nn.Linear(
+                    cfg.CHANNELS[level - self.n_levels],
+                    self.out_dim[level],
+                )
+            )
+            self.img_feats_proj.append(
                 nn.Linear(
                     cfg.CHANNELS[level - self.n_levels],
                     self.out_dim[level],
@@ -52,68 +61,51 @@ class FusionEncoder(nn.Module):
                 )
             )
 
-        # sem_head_pcd_in_dim = cfg.CHANNELS[-1]
-        # sem_head_img_in_dim = cfg.CHANNELS[-1]
         sem_head_in_dim = self.out_dim[-1]
-        # self.sem_head_pcd = nn.Linear(sem_head_pcd_in_dim, data_cfg.NUM_CLASSES)
-        # self.sem_head_img = nn.Linear(sem_head_img_in_dim, data_cfg.NUM_CLASSES)
         self.sem_head = nn.Linear(sem_head_in_dim, data_cfg.NUM_CLASSES)
 
     def forward(self, x):
-        camera_fov_mask = [torch.from_numpy(ind).bool().cuda() for ind in x["uvrgb_ind"]]
-        pcd_feats, coords = self.pcd_enc(x)
-        img_feats, _ = self.img_enc(x)
+        # get pcd feats
+        pcd = [f[ind] for f, ind in zip(x['feats'], x['indices'])]
+        pcd_feats, coords = self.pcd_enc(pcd)
+
+        # get img feats
+        img = torch.from_numpy(np.array(x['image'])).float().cuda()
+        img_feats = self.img_enc(img)
+        # map img_feats to pts
+        img_feats = [self.proj_img2pcd(x['map_img2pcd'], f) for f in img_feats]
 
         # project feats to out_dim
         pcd_feats = [
             [
-                self.feats_proj[l](batch)
+                self.pcd_feats_proj[l](batch)
                 for batch in pcd_feats[l]
             ]
             for l in range(self.n_levels)
         ]
         img_feats = [
             [
-                self.feats_proj[l](batch)
+                self.img_feats_proj[l](batch)
                 for batch in img_feats[l]
             ]
             for l in range(self.n_levels)
         ]
 
-        pcd_feats_cf = [
-            [
-                batch[mask]
-                for batch, mask in zip(pcd_feats[l], camera_fov_mask)
-            ]
-            for l in range(self.n_levels)
-        ]
-        pcd_feats_cf, _, pad_masks_cf = self.pad_batch(coords, pcd_feats_cf)
+        # pad batch
+        pcd_feats, batched_coords, pad_masks = self.pad_batch(coords, pcd_feats)
         img_feats, _, _ = self.pad_batch(coords, img_feats)
+
+        assert len(pcd_feats[0].shape[1]) == len(img_feats[0].shape[1]), \
+            "pcd_feats and img_feats must have the same number of points"
 
         # auto-weighted feature fusion
         fused_feats = []
         for l in range(self.n_levels):
-            feats_cf = self.fusion[l](
-                img_feats[l],
-                pcd_feats_cf[l],
-            )
-            # unbatch
-            fused_feats.append(
-                [
-                    batch[~mask]
-                    for batch, mask in zip(feats_cf, pad_masks_cf[l])
-                ]
-            )
+            fused_feats.append(self.fusion[l](img_feats[l], pcd_feats[l]))
 
-        # replace pcd_feats in camera fov with fused_feats
-        for l in range(self.n_levels):
-            for pf, ff, mask in zip(pcd_feats[l], fused_feats[l], camera_fov_mask):
-                pf[mask] += ff
+        bb_logits = self.sem_head(fused_feats[-1])
 
-        feats, coords, pad_masks = self.pad_batch(coords, pcd_feats)
-        bb_logits = self.sem_head(feats[-1])
-
-        return feats, coords, pad_masks, bb_logits
+        return fused_feats, batched_coords, pad_masks, bb_logits
 
     def pad_batch(self, coors, feats):
         """
@@ -149,6 +141,29 @@ class FusionEncoder(nn.Module):
         ]
         return feats, coors, pad_masks
 
+    def proj_img2pcd(self, map_img2pcd, img_feats):
+        """
+        Project img_feats to pcd_feats
+        Args:
+            map_img2pcd: list of [Ni, 2] np.ndarray
+            img_feats: [B, C ,H, W]
+        Returns:
+            img2pcd_feats: list of [Ni, C] torch.Tensor
+        """
+        assert len(map_img2pcd) == img_feats.shape[0], \
+            "Batch size of map_img2pcd and img_feats must be the same"
+
+        C, H, W = img_feats.shape[1:]
+        img2pcd_feats = []
+        for b, m in enumerate(map_img2pcd):
+            N = m.shape[0]
+            i2p_f = torch.zeros(N, C).to(img_feats.device)
+            for n in range(N):
+                u, v = m[n]
+                i2p_f[n] = img_feats[b, :, v, u]
+            img2pcd_feats.append(i2p_f)
+        return img2pcd_feats
+
 
 class AutoWeightedFeatureFusion(nn.Module):
     def __init__(self, c_in_m1, c_in_m2, c_out):
@@ -176,14 +191,7 @@ class AutoWeightedFeatureFusion(nn.Module):
         fused_feats = torch.cat([weighted_feats_m1, weighted_feats_m2], dim=2)
         # MLP
         fused_feats = self.encoder(fused_feats)
-        # residual
-        fused_feats = fused_feats
+        # # residual
+        # fused_feats = fused_feats + feats_m1
 
         return fused_feats
-
-
-class ImgEncoderDecoder(nn.Module):
-    def __init__(self):
-        super().__init__()
-
-        self.backbone = models.resnet50(pretrained=True)

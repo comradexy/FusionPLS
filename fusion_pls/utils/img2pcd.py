@@ -458,3 +458,41 @@ def img_feat_proj(coords, feats, image, calib):
     )
 
     return feats_uvrgb, indices
+
+
+def get_map_img2pcd(pcd_coords, img_size, calib):
+    """
+    Get mapping from image to point cloud.
+    Args:
+        pcd_coords (np.ndarray, shape=[N, 3]): Coordinates of points.
+        img_size (tuple): Size of image, (H, W).
+        calib (dict): Matrix to project points in camera coordinate to lidar coordinate.
+    Returns:
+        mapping: np.ndarray, shape=[N, 2]: Mapping from image to point cloud.
+    """
+
+    Tr = calib["Tr"]
+    P2 = calib["P2"]
+    _, indices = remove_outside_points(
+        pcd_coords,
+        Tr,
+        P2,
+        list(img_size),
+    )
+
+    # Convert points from lidar coordinate to camera coordinate
+    pts_cam = lidar_to_camera(pcd_coords[indices], Tr, P2)
+    # Convert points from camera coordinate to image coordinate
+    pts_img = pts_cam[:, :2] / pts_cam[:, 2:]
+    # Convert image coordinate to pixel coordinates
+    pts_img = pts_img.astype(np.int32)
+
+    map_img2pcd = []
+    for pt in pts_img:
+        u, v = pt
+        u = min(max(u, 0), img_size[1] - 1)
+        v = min(max(v, 0), img_size[0] - 1)
+        map_img2pcd.append(np.array([u, v]))
+    map_img2pcd = np.array(map_img2pcd).reshape(-1, 2)
+
+    return map_img2pcd, indices

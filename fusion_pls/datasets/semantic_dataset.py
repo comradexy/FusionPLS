@@ -6,7 +6,7 @@ import yaml
 from PIL import Image
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
-from fusion_pls.utils.img2pcd import img_feat_proj
+from fusion_pls.utils.img2pcd import img_feat_proj, get_map_img2pcd
 
 
 class SemanticDatasetModule(LightningDataModule):
@@ -116,6 +116,7 @@ class SemanticDataset(Dataset):
         self.dataset = cfg.MODEL.DATASET
         data_path = cfg[self.dataset].PATH + "/sequences/"
         yaml_path = cfg[self.dataset].CONFIG
+        self.img_mean, self.img_std = cfg[self.dataset].IMG_NORM_PARAMS
 
         with open(yaml_path, "r") as stream:
             semyaml = yaml.safe_load(stream)
@@ -136,7 +137,6 @@ class SemanticDataset(Dataset):
         self.im_idx = []
         pose_files = []
         calib_files = []
-        token_files = []
         fill = 2 if self.dataset == "KITTI" else 4
         for i_folder in split:
             self.im_idx += absoluteFilePaths(
@@ -152,20 +152,11 @@ class SemanticDataset(Dataset):
                     "/".join([data_path, str(i_folder).zfill(fill), "calib.txt"])
                 )
             )
-            if self.dataset == "NUSCENES":
-                token_files.append(
-                    absoluteDirPath(
-                        "/".join(
-                            [data_path, str(i_folder).zfill(fill), "lidar_tokens.txt"]
-                        )
-                    )
-                )
 
         self.im_idx.sort()
         poses, calibs = load_poses_and_calibs(pose_files, calib_files)
         self.poses = poses
         self.calibs = calibs
-        self.tokens = load_tokens(token_files)
 
     def __len__(self):
         return len(self.im_idx)
@@ -187,13 +178,13 @@ class SemanticDataset(Dataset):
         image = Image.open(
             self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png"
         )
-        image = np.array(image)
+        image = np.array(image, dtype=np.float32, copy=False) / 255.
+        img_mean = np.asarray(self.img_mean, dtype=np.float32)
+        img_std = np.asarray(self.img_mean, dtype=np.float32)
+        image = (image - img_mean) / img_std
 
         if len(intensity.shape) == 2:
             intensity = np.squeeze(intensity)
-        token = "0"
-        if len(self.tokens) > 0:
-            token = self.tokens[index]
         if self.split == "test":
             annotated_data = np.expand_dims(
                 np.zeros_like(points[:, 0], dtype=int), axis=1
@@ -219,7 +210,6 @@ class SemanticDataset(Dataset):
             fname,
             calib,
             pose,
-            token,
         )
 
 
@@ -252,7 +242,7 @@ class MaskSemanticDataset(Dataset):
         empty = True
         while empty:
             data = self.dataset[index]
-            xyz, intensity, image, sem_labels, ins_labels, fname, calib, pose, token = data
+            xyz, intensity, image, sem_labels, ins_labels, fname, calib, pose = data
             keep = np.argwhere(
                 (self.xlim[0] < xyz[:, 0])
                 & (xyz[:, 0] < self.xlim[1])
@@ -286,14 +276,13 @@ class MaskSemanticDataset(Dataset):
         )
 
         if self.split == "test":
-            uvrgb, uvrgb_ind = img_feat_proj(xyz, feats, image, calib)
             return (
                 xyz,
                 feats,
-                uvrgb,
-                uvrgb_ind,
-                sem_labels,
-                ins_labels,
+                np.array([]),
+                np.array([]),
+                np.array([]),
+                np.array([]),
                 torch.tensor([]),
                 torch.tensor([]),
                 [],
@@ -302,7 +291,6 @@ class MaskSemanticDataset(Dataset):
                 fname,
                 calib,
                 pose,
-                token,
             )
 
         # Subsample
@@ -313,8 +301,39 @@ class MaskSemanticDataset(Dataset):
             sem_labels = sem_labels[idx]
             ins_labels = ins_labels[idx]
 
-        uvrgb, uvrgb_ind = img_feat_proj(xyz, feats, image, calib)
+        map_img2pcd, indices = get_map_img2pcd(xyz, tuple(image.shape[0:2]), calib)
 
+        # get decoder labels
+        dec_lab_all = self.get_decoder_labels(
+            xyz, sem_labels, ins_labels
+        )
+        # get decoder labels in camera fov
+        dec_lab_icf = self.get_decoder_labels(
+            xyz[indices], sem_labels[indices], ins_labels[indices]
+        )
+
+        # Augmentations
+        # xyz contains original points coordinates
+        # feats contains augmented coordinates and other textural features
+        if self.split == "train" and self.aug:
+            feats = pcd_augmentations(feats)
+
+        return (
+            xyz,  # original points coordinates
+            feats,  # augmented coordinates and pcd features
+            image,  # normalized image
+            map_img2pcd,  # mapping from image to pcd, shape=[N, 2]
+            indices,  # indices of points in image
+            sem_labels,
+            ins_labels,
+            dec_lab_all,
+            dec_lab_icf,
+            fname,  # file path of pcd
+            calib,
+            pose,
+        )
+
+    def get_decoder_labels(self, xyz, sem_labels, ins_labels):
         stuff_masks = np.array([]).reshape(0, xyz.shape[0])
         stuff_masks_ids = []
         things_masks = np.array([]).reshape(0, xyz.shape[0])
@@ -370,7 +389,7 @@ class MaskSemanticDataset(Dataset):
                 masks.shape[0] == masks_cls.shape[0]
         ), f"not same number masks and classes: masks {masks.shape[0]}, classes {masks_cls.shape[0]} "
 
-        # things center heat map
+        # get things offsets
         things_off = np.zeros((len(things_masks), xyz.shape[0], 3))
         for i, mask in enumerate(things_masks):
             # get instance xyz
@@ -382,36 +401,20 @@ class MaskSemanticDataset(Dataset):
             max_x, max_y, max_z = np.max(offset, axis=0)
             min_x, min_y, min_z = np.min(offset, axis=0)
             offset = offset / np.array([max_x - min_x, max_y - min_y, max_z - min_z])
-            # things_chm[i, mask.astype(bool)] = 1 - np.linalg.norm(offset, axis=1).reshape(-1, 1)
-            # things_off[i, ~mask.astype(bool)] = 0.0
             things_off[i, mask.astype(bool)] = offset
         things_cls = torch.from_numpy(things_cls)
         things_off = torch.from_numpy(things_off)
 
-        # Augmentations
-        # xyz contains original points coordinates
-        # feats contains augmented coordinates and other textural features
-        if self.split == "train" and self.aug:
-            feats = pcd_augmentations(feats)
+        outputs = {
+            "masks": masks,
+            "masks_cls": masks_cls,
+            "masks_ids": masks_ids,
+            "things_off": things_off,
+            "things_cls": things_cls,
+            "things_masks_ids": things_masks_ids,
+        }
 
-        return (
-            xyz,  # original points coordinates
-            feats,  # augmented coordinates and pcd features
-            uvrgb,
-            uvrgb_ind,
-            sem_labels,
-            ins_labels,
-            masks,
-            masks_cls,
-            masks_ids,
-            things_off,
-            things_cls,
-            things_masks_ids,
-            fname,  # file path of pcd
-            calib,
-            pose,
-            token,
-        )
+        return outputs
 
 
 class BatchCollation:
@@ -419,20 +422,16 @@ class BatchCollation:
         self.keys = [
             "pt_coord",
             "feats",
-            "uvrgb",
-            "uvrgb_ind",
+            "image",
+            "map_img2pcd",
+            "indices",
             "sem_label",
             "ins_label",
-            "masks",
-            "masks_cls",
-            "masks_ids",
-            "things_off",
-            "things_cls",
-            "things_mask_ids",
+            "dec_lab_all",
+            "dec_lab_icf",
             "fname",
             "calib",
             "pose",
-            "token",
         ]
 
     def __call__(self, data):
@@ -543,20 +542,6 @@ def load_calibs(calib_files):
         calib = parse_calibration(calib_files[i])
         calibs.append(calib)
     return calibs
-
-
-def load_tokens(token_files):
-    if len(token_files) == 0:
-        return []
-    token_files.sort()
-    tokens = []
-    for f in token_files:
-        token_file = open(f)
-        for line in token_file:
-            token = line.strip()
-            tokens.append(token)
-        token_file.close()
-    return tokens
 
 
 def getDir(obj):

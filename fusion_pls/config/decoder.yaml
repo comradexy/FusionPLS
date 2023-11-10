@@ -6,6 +6,7 @@ DECODER:
     DEC_BLOCKS: 3
     NUM_QUERIES: 100
     DETECTOR:
+        ENABLE: False
         NHEADS: 4
         DIM_FFN: 512
         NUM_QUERIES: 50

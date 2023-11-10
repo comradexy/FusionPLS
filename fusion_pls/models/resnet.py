@@ -83,9 +83,7 @@ class ResNetEncoderDecoder(nn.Module):
             for param in self.layer4.parameters():
                 param.requires_grad = False
 
-    def forward(self, inputs):
-        x = torch.from_numpy(np.array(inputs['image'])).float().cuda()
-
+    def forward(self, x):
         h, w = x.shape[2], x.shape[3]
         if h % self.patch_size != 0 or w % self.patch_size != 0:
             new_h, new_w = self.get_new_size(h, w)

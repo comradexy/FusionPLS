@@ -8,6 +8,9 @@ from torch import nn
 class PanopticDecoder(nn.Module):
     def __init__(self, in_channels, cfg, data_cfg):
         super().__init__()
+
+        self.enable_detector = cfg.DETECTOR.ENABLE
+
         self.num_feat_levels = cfg.FEATURE_LEVELS
         self.num_decoders = cfg.DEC_BLOCKS
         self.num_layers = self.num_feat_levels * self.num_decoders
@@ -114,24 +117,25 @@ class PanopticDecoder(nn.Module):
             level_index = i % self.num_feat_levels
 
             # instance center heatmap prediction
-            outputs_class_things, outputs_off_x, outputs_off_y, outputs_off_z = self.inst_pred_heads(
-                query_things,
-                mask_feats,
-            )
-            query_things = self.det_decoder[i](
-                query_things,
-                src[level_index],
-                pos=coors[level_index],
-                pad_mask=pad_masks[level_index],
-                query_pos=query_pos_things,
-            )
-            # embed things query to panoptic query
-            query[:, :self.num_queries_things] += query_things
-            # save detection outputs
-            pred_class_things.append(outputs_class_things)
-            pred_off_x_things.append(outputs_off_x)
-            pred_off_y_things.append(outputs_off_y)
-            pred_off_z_things.append(outputs_off_z)
+            if self.enable_detector:
+                outputs_class_things, outputs_off_x, outputs_off_y, outputs_off_z = self.inst_pred_heads(
+                    query_things,
+                    mask_feats,
+                )
+                query_things = self.det_decoder[i](
+                    query_things,
+                    src[level_index],
+                    pos=coors[level_index],
+                    pad_mask=pad_masks[level_index],
+                    query_pos=query_pos_things,
+                )
+                # embed things query to panoptic query
+                query[:, :self.num_queries_things] += query_things
+                # save detection outputs
+                pred_class_things.append(outputs_class_things)
+                pred_off_x_things.append(outputs_off_x)
+                pred_off_y_things.append(outputs_off_y)
+                pred_off_z_things.append(outputs_off_z)
 
             # segmentation
             outputs_class, outputs_mask, attn_mask = self.mask_pred_heads(
@@ -154,43 +158,42 @@ class PanopticDecoder(nn.Module):
             pred_mask_panoptic.append(outputs_mask)
 
         # final prediction
-        outputs_class_things, outputs_off_x, outputs_off_y, outputs_off_z = self.inst_pred_heads(
-            query_things,
-            mask_feats,
-        )
+        out = {}
+        if self.enable_detector:
+            outputs_class_things, outputs_off_x, outputs_off_y, outputs_off_z = self.inst_pred_heads(
+                query_things,
+                mask_feats,
+            )
+            pred_class_things.append(outputs_class_things)
+            pred_off_x_things.append(outputs_off_x)
+            pred_off_y_things.append(outputs_off_y)
+            pred_off_z_things.append(outputs_off_z)
+
+            out["inst_outputs"] = {
+                "pred_logits": pred_class_things[-1],
+                "pred_off_x": pred_off_x_things[-1],
+                "pred_off_y": pred_off_y_things[-1],
+                "pred_off_z": pred_off_z_things[-1],
+                "aux_outputs": self.set_aux_inst(pred_class_things,
+                                                 pred_off_x_things,
+                                                 pred_off_y_things,
+                                                 pred_off_z_things)
+            }
+
         outputs_class, outputs_mask, attn_mask = self.mask_pred_heads(
             query,
             mask_feats,
             pad_mask=last_pad,
         )
-        pred_class_things.append(outputs_class_things)
-        pred_off_x_things.append(outputs_off_x)
-        pred_off_y_things.append(outputs_off_y)
-        pred_off_z_things.append(outputs_off_z)
         pred_class_panoptic.append(outputs_class)
         pred_mask_panoptic.append(outputs_mask)
 
         assert len(pred_class_panoptic) == self.num_layers + 1
-
-        inst_out = {
-            "pred_logits": pred_class_things[-1],
-            "pred_off_x": pred_off_x_things[-1],
-            "pred_off_y": pred_off_y_things[-1],
-            "pred_off_z": pred_off_z_things[-1],
-            "aux_outputs": self.set_aux_inst(pred_class_things,
-                                             pred_off_x_things,
-                                             pred_off_y_things,
-                                             pred_off_z_things)
-        }
-        pan_out = {
+        out["pan_outputs"] = {
             "pred_logits": pred_class_panoptic[-1],
             "pred_masks": pred_mask_panoptic[-1],
             "aux_outputs": self.set_aux_pan(pred_class_panoptic,
                                             pred_mask_panoptic)
-        }
-        out = {
-            "inst_outputs": inst_out,
-            "pan_outputs": pan_out,
         }
 
         return out, last_pad

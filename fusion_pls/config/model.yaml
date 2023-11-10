@@ -1,5 +1,5 @@
 EXPERIMENT:
-    ID: fusion_pls
+    ID: fusion_lps
 
 TRAIN:
     STEP: 50
@@ -42,14 +42,7 @@ KITTI:
     SPACE: # coord limits
         [[-48.0,48.0],[-48.0,48.0],[-4.0,1.5]]
     SUB_NUM_POINTS: 80000
+    IMG_NORM_PARAMS:
+        - [ 0.485, 0.456, 0.406 ]
+        - [ 0.229, 0.224, 0.225 ]
 
-NUSCENES:
-    PATH: data/nuscenes
-    CONFIG: datasets/semantic-nuscenes.yaml
-    NUM_CLASSES: 17
-    NUM_THING_CLASSES: 9
-    IGNORE_LABEL: 0
-    MIN_POINTS: 10 #smallest mask
-    SPACE: # coord limits
-        [[-50.0,50.0],[-50.0,50.0],[-5.0,3]]
-    SUB_NUM_POINTS: 50000

@@ -1,17 +1,18 @@
 BACKBONE:
-    CHANNELS: [ 32, 32, 64, 128, 256, 256, 128, 96, 96 ]
-    KNN_UP: 3
     PCD:
+        CHANNELS: [ 32, 32, 64, 128, 256, 256, 128, 96, 96 ]
+        KNN_UP: 3
         RESOLUTION: 0.05
         INPUT_DIM: 4
         MODALITY: xyzi
         PRETRAINED: ckpt/fusion_pls_semkitti_mn_backbone.ckpt
         FREEZE: True
     IMG:
-        RESOLUTION: 0.1
-        INPUT_DIM: 5
-        MODALITY: uvrgb
-        PRETRAINED: ckpt/fusion_pls_semkitti_mn_backbone.ckpt
+        MODEL: resnet50
+        PRETRAINED: False
+        PATCH_SIZE: 16
+        HIDDEN_DIM: 256
+        INTERP_MODE: bilinear
         FREEZE: False
     FUSION:
         N_LEVELS: 4

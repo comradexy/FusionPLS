@@ -15,6 +15,7 @@ class ResNetEncoderDecoder(nn.Module):
         self.hidden_dim = cfg.HIDDEN_DIM
         self.patch_size = cfg.PATCH_SIZE
         self.interp_mode = cfg.INTERP_MODE
+        self.img_size = cfg.IMG_SIZE
 
         if backbone == "resnet34":
             net = models.resnet34(pretrained)
@@ -83,7 +84,34 @@ class ResNetEncoderDecoder(nn.Module):
             for param in self.layer4.parameters():
                 param.requires_grad = False
 
-    def forward(self, x):
+    def forward(self, inputs, outputs_size=None):
+        """
+        Args:
+            inputs: list of images, each image is a numpy array of shape [H, W, 3]
+            outputs_size: list of output size, each size is a tuple of (H, W)
+        Returns:
+            out_feats: multi-level features, each level is a list(len=bs) of features,
+                each feature is a torch.Tensor of shape [C, H, W]
+        """
+        # pre-check
+        assert isinstance(inputs, list), "inputs must be a list"
+        assert isinstance(outputs_size, list) or outputs_size is None, \
+            "outputs_size must be a list or None"
+        assert len(inputs) == len(outputs_size) or outputs_size is None, \
+            "inputs and outputs_size must have the same length"
+
+        # unify input image size
+        x = [
+            self.interp(
+                torch.from_numpy(np.array(batch)).float().unsqueeze(0).cuda(),
+                size=tuple(self.img_size),
+            )
+            for batch in inputs
+        ]
+        x = torch.cat(x, dim=0)  # [B, C, H, W]
+        assert x.shape[1] == 3, "image must have 3 channels"
+
+        # check input size
         h, w = x.shape[2], x.shape[3]
         if h % self.patch_size != 0 or w % self.patch_size != 0:
             new_h, new_w = self.get_new_size(h, w)
@@ -96,18 +124,24 @@ class ResNetEncoderDecoder(nn.Module):
         layer3_out = self.layer3(layer2_out)
         layer4_out = self.layer4(layer3_out)
 
-        # Deconv
+        # Decoder
         layer1_out = self.deconv_layer1(layer1_out)
         layer2_out = self.deconv_layer2(layer2_out)
         layer3_out = self.deconv_layer3(layer3_out)
         layer4_out = self.deconv_layer4(layer4_out)
 
         out_feats = [
-            self.interp(layer1_out, size=(h, w)),  # 1/2
-            self.interp(layer2_out, size=(h, w)),  # 1/4
-            self.interp(layer3_out, size=(h, w)),  # 1/8
-            self.interp(layer4_out, size=(h, w)),  # 1/16
+            [layer1_out[b] for b in range(layer1_out.shape[0])],  # 1/2
+            [layer2_out[b] for b in range(layer2_out.shape[0])],  # 1/4
+            [layer3_out[b] for b in range(layer3_out.shape[0])],  # 1/8
+            [layer4_out[b] for b in range(layer4_out.shape[0])],  # 1/16
         ]
+        if outputs_size is not None:
+            out_feats = [
+                [self.interp(feat.unsqueeze(0), size=outputs_size[b]).squeeze(0)
+                 for b, feat in enumerate(level)]
+                for level in out_feats
+            ]
 
         return out_feats
 

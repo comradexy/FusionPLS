@@ -35,21 +35,19 @@ class FusionEncoder(nn.Module):
         self.out_dim = cfg.FUSION.OUT_DIM
         if isinstance(self.out_dim, int):
             self.out_dim = [cfg.FUSION.OUT_DIM] * self.n_levels
-        self.pcd_out_dim = cfg.PCD.CHANNELS[-self.n_levels:]
-        self.img_out_dim = cfg.IMG.CHANNELS[-self.n_levels:]
         self.pcd_feats_proj = nn.ModuleList()
         self.img_feats_proj = nn.ModuleList()
         self.fusion = nn.ModuleList()
         for level in range(self.n_levels):
             self.pcd_feats_proj.append(
                 nn.Linear(
-                    cfg.CHANNELS[level - self.n_levels],
+                    cfg.PCD.CHANNELS[level - self.n_levels],
                     self.out_dim[level],
                 )
             )
             self.img_feats_proj.append(
                 nn.Linear(
-                    cfg.CHANNELS[level - self.n_levels],
+                    cfg.IMG.HIDDEN_DIM,
                     self.out_dim[level],
                 )
             )
@@ -70,10 +68,13 @@ class FusionEncoder(nn.Module):
         pcd_feats, coords = self.pcd_enc(pcd)
 
         # get img feats
-        img = torch.from_numpy(np.array(x['image'])).float().cuda()
-        img_feats = self.img_enc(img)
-        # map img_feats to pts
-        img_feats = [self.proj_img2pcd(x['map_img2pcd'], f) for f in img_feats]
+        img_sizes = [tuple(i.shape[-2:]) for i in x['image']]
+        img_feats = self.img_enc(x['image'], img_sizes)
+        # project img_feats to pcd
+        img_feats = [
+            self.proj_img2pcd(x['map_img2pcd'], level)
+            for level in img_feats
+        ]
 
         # project feats to out_dim
         pcd_feats = [
@@ -95,7 +96,7 @@ class FusionEncoder(nn.Module):
         pcd_feats, batched_coords, pad_masks = self.pad_batch(coords, pcd_feats)
         img_feats, _, _ = self.pad_batch(coords, img_feats)
 
-        assert len(pcd_feats[0].shape[1]) == len(img_feats[0].shape[1]), \
+        assert pcd_feats[0].shape[0] == img_feats[0].shape[0], \
             "pcd_feats and img_feats must have the same number of points"
 
         # auto-weighted feature fusion
@@ -146,22 +147,17 @@ class FusionEncoder(nn.Module):
         Project img_feats to pcd_feats
         Args:
             map_img2pcd: list of [Ni, 2] np.ndarray
-            img_feats: [B, C ,H, W]
+            img_feats: list of [C, H, W] torch.Tensor
         Returns:
             img2pcd_feats: list of [Ni, C] torch.Tensor
         """
-        assert len(map_img2pcd) == img_feats.shape[0], \
+        assert len(map_img2pcd) == len(img_feats), \
             "Batch size of map_img2pcd and img_feats must be the same"
 
-        C, H, W = img_feats.shape[1:]
         img2pcd_feats = []
         for b, m in enumerate(map_img2pcd):
-            N = m.shape[0]
-            i2p_f = torch.zeros(N, C).to(img_feats.device)
-            for n in range(N):
-                u, v = m[n]
-                i2p_f[n] = img_feats[b, :, v, u]
-            img2pcd_feats.append(i2p_f)
+            img2pcd_feats.append(img_feats[b].permute(1, 2, 0)[m[:, 1], m[:, 0]])
+
         return img2pcd_feats
 
 

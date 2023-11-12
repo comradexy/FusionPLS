@@ -18,6 +18,8 @@ class FusionLPS(LightningModule):
         self.save_hyperparameters(dict(hparams))
         self.cfg = hparams
 
+        self.in_camera_fov = hparams.MODEL.IN_CAMERA_FOV
+
         backbone = FusionEncoder(hparams.BACKBONE, hparams[hparams.MODEL.DATASET])
         self.backbone = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(backbone)
 
@@ -48,27 +50,36 @@ class FusionLPS(LightningModule):
     def get_loss(self, x, outputs, padding, bb_logits):
         losses = {}
 
-        dec_labels = x["dec_lab_icf"]
-        # sem_labels = [
-        #     torch.from_numpy(i).type(torch.LongTensor).cuda() for i in x["sem_label"]
-        # ]
-        sem_labels = [
-            torch.from_numpy(s[i]).type(torch.LongTensor).cuda() for s, i in zip(x["sem_label"], x["indices"])
-        ]
-        sem_labels = torch.cat([s.squeeze(1) for s in sem_labels], dim=0)
+        if self.in_camera_fov:
+            dec_labels = x["dec_lab_icf"]
+            sem_labels = [
+                torch.from_numpy(s[i]).type(torch.LongTensor).cuda() for s, i in zip(x["sem_label"], x["indices"])
+            ]
+        else:
+            dec_labels = x["dec_lab_all"]
+            sem_labels = [
+                torch.from_numpy(i).type(torch.LongTensor).cuda() for i in x["sem_label"]
+            ]
+        masks = [b["masks"] for b in dec_labels]
+        masks_cls = [b["masks_cls"] for b in dec_labels]
+        masks_ids = [b["masks_ids"] for b in dec_labels]
+        things_cls = [b["things_cls"] for b in dec_labels]
+        things_off = [b["things_off"] for b in dec_labels]
+        things_masks_ids = [b["things_masks_ids"] for b in dec_labels]
 
         # calculate mask loss
-        mask_targets = {"classes": dec_labels["masks_cls"], "masks": dec_labels["masks"]}
-        loss_mask = self.mask_loss(outputs["pan_outputs"], mask_targets, dec_labels["masks_ids"])
+        mask_targets = {"classes": masks_cls, "masks": masks}
+        loss_mask = self.mask_loss(outputs["pan_outputs"], mask_targets, masks_ids)
         losses.update(loss_mask)
 
         # calculate instance loss
         if self.enable_detector:
-            inst_targets = {"classes": dec_labels["things_cls"], "offsets": dec_labels["things_off"]}
-            loss_inst = self.inst_loss(outputs["inst_outputs"], inst_targets, dec_labels["things_mask_ids"])
+            inst_targets = {"classes": things_cls, "offsets": things_off}
+            loss_inst = self.inst_loss(outputs["inst_outputs"], inst_targets, things_masks_ids)
             losses.update(loss_inst)
 
         # calculate semantic loss
+        sem_labels = torch.cat([s.squeeze(1) for s in sem_labels], dim=0)
         bb_logits = bb_logits[~padding]
         loss_sem_bb = self.sem_loss(bb_logits, sem_labels)
         losses.update(loss_sem_bb)
@@ -99,6 +110,10 @@ class FusionLPS(LightningModule):
         self.log("val_loss", total_loss, batch_size=self.cfg.TRAIN.BATCH_SIZE)
 
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
+
+        if self.in_camera_fov:
+            x["sem_label"] = [b[i] for b, i in zip(x["sem_label"], x["indices"])]
+            x["ins_label"] = [b[i] for b, i in zip(x["ins_label"], x["indices"])]
         self.evaluator.update(sem_pred, ins_pred, x)
 
         torch.cuda.empty_cache()
@@ -123,6 +138,10 @@ class FusionLPS(LightningModule):
     def evaluation_step(self, x: dict, idx):
         outputs, padding, bb_logits = self.forward(x)
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
+
+        if self.in_camera_fov:
+            x["sem_label"] = [b[i] for b, i in zip(x["sem_label"], x["indices"])]
+            x["ins_label"] = [b[i] for b, i in zip(x["ins_label"], x["indices"])]
         self.evaluator.update(sem_pred, ins_pred, x)
 
     def test_step(self, x: dict, idx):

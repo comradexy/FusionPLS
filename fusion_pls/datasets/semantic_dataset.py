@@ -181,7 +181,8 @@ class SemanticDataset(Dataset):
         image = np.array(image, dtype=np.float32, copy=False) / 255.
         img_mean = np.asarray(self.img_mean, dtype=np.float32)
         img_std = np.asarray(self.img_mean, dtype=np.float32)
-        image = (image - img_mean) / img_std
+        image = (image - img_mean) / img_std  # [H, W, C]
+        image = np.transpose(image, (2, 0, 1))  # [H, W, C] -> [C, H, W]
 
         if len(intensity.shape) == 2:
             intensity = np.squeeze(intensity)
@@ -301,7 +302,7 @@ class MaskSemanticDataset(Dataset):
             sem_labels = sem_labels[idx]
             ins_labels = ins_labels[idx]
 
-        map_img2pcd, indices = get_map_img2pcd(xyz, tuple(image.shape[0:2]), calib)
+        map_img2pcd, indices = get_map_img2pcd(xyz, tuple(image.shape[1:3]), calib)
 
         # get decoder labels
         dec_lab_all = self.get_decoder_labels(

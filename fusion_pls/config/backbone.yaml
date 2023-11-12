@@ -1,20 +1,21 @@
 BACKBONE:
-    PCD:
-        CHANNELS: [ 32, 32, 64, 128, 256, 256, 128, 96, 96 ]
-        KNN_UP: 3
-        RESOLUTION: 0.05
-        INPUT_DIM: 4
-        MODALITY: xyzi
-        PRETRAINED: ckpt/fusion_pls_semkitti_mn_backbone.ckpt
-        FREEZE: True
-    IMG:
-        MODEL: resnet50
-        PRETRAINED: False
-        PATCH_SIZE: 16
-        HIDDEN_DIM: 256
-        INTERP_MODE: bilinear
-        FREEZE: False
-    FUSION:
-        N_LEVELS: 4
-        OUT_DIM: 256
+  PCD:
+    CHANNELS: [ 32, 32, 64, 128, 256, 256, 128, 96, 96 ]
+    KNN_UP: 3
+    RESOLUTION: 0.05
+    INPUT_DIM: 4
+    MODALITY: xyzi
+    PRETRAINED: ckpt/mink_panoptic.ckpt
+    FREEZE: True
+  IMG:
+    MODEL: resnet50
+    PRETRAINED: True
+    PATCH_SIZE: 16
+    HIDDEN_DIM: 64
+    INTERP_MODE: bilinear
+    IMG_SIZE: [ 384, 1248 ] # [ H, W ]
+    FREEZE: False
+  FUSION:
+    N_LEVELS: 4
+    OUT_DIM: 256
 

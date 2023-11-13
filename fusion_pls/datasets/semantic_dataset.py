@@ -283,12 +283,12 @@ class MaskSemanticDataset(Dataset):
                 np.array([]),
                 np.array([]),
                 np.array([]),
-                np.array([]),
                 torch.tensor([]),
                 torch.tensor([]),
-                [],
                 torch.tensor([]),
                 torch.tensor([]),
+                {},
+                {},
                 fname,
                 calib,
                 pose,
@@ -303,6 +303,10 @@ class MaskSemanticDataset(Dataset):
             ins_labels = ins_labels[idx]
 
         map_img2pcd, indices = get_map_img2pcd(xyz, tuple(image.shape[1:3]), calib)
+
+        # get sem_labels and ins_labels in camera fov
+        sem_labels_icf = sem_labels[indices]
+        ins_labels_icf = ins_labels[indices]
 
         # get decoder labels
         dec_lab_all = self.get_decoder_labels(
@@ -327,6 +331,8 @@ class MaskSemanticDataset(Dataset):
             indices,  # indices of points in image
             sem_labels,
             ins_labels,
+            sem_labels_icf,
+            ins_labels_icf,
             dec_lab_all,
             dec_lab_icf,
             fname,  # file path of pcd
@@ -428,6 +434,8 @@ class BatchCollation:
             "indices",
             "sem_label",
             "ins_label",
+            "sem_label_icf",
+            "ins_label_icf",
             "dec_lab_all",
             "dec_lab_icf",
             "fname",

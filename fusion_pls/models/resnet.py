@@ -17,6 +17,8 @@ class ResNetEncoderDecoder(nn.Module):
         self.interp_mode = cfg.INTERP_MODE
         self.img_size = cfg.IMG_SIZE
 
+        if pretrained:
+            print("Using pretrained backbone")
         if backbone == "resnet34":
             net = models.resnet34(pretrained)
             channels = [64, 128, 256, 512]

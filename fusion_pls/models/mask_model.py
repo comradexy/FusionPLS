@@ -53,12 +53,14 @@ class FusionLPS(LightningModule):
         if self.in_camera_fov:
             dec_labels = x["dec_lab_icf"]
             sem_labels = [
-                torch.from_numpy(s[i]).type(torch.LongTensor).cuda() for s, i in zip(x["sem_label"], x["indices"])
+                torch.from_numpy(i).type(torch.LongTensor).cuda()
+                for i in x["sem_label_icf"]
             ]
         else:
             dec_labels = x["dec_lab_all"]
             sem_labels = [
-                torch.from_numpy(i).type(torch.LongTensor).cuda() for i in x["sem_label"]
+                torch.from_numpy(i).type(torch.LongTensor).cuda()
+                for i in x["sem_label"]
             ]
         masks = [b["masks"] for b in dec_labels]
         masks_cls = [b["masks_cls"] for b in dec_labels]
@@ -112,8 +114,8 @@ class FusionLPS(LightningModule):
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
 
         if self.in_camera_fov:
-            x["sem_label"] = [b[i] for b, i in zip(x["sem_label"], x["indices"])]
-            x["ins_label"] = [b[i] for b, i in zip(x["ins_label"], x["indices"])]
+            x["sem_label"] = x["sem_label_icf"]
+            x["ins_label"] = x["ins_label_icf"]
         self.evaluator.update(sem_pred, ins_pred, x)
 
         torch.cuda.empty_cache()
@@ -140,8 +142,8 @@ class FusionLPS(LightningModule):
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
 
         if self.in_camera_fov:
-            x["sem_label"] = [b[i] for b, i in zip(x["sem_label"], x["indices"])]
-            x["ins_label"] = [b[i] for b, i in zip(x["ins_label"], x["indices"])]
+            x["sem_label"] = x["sem_label_icf"]
+            x["ins_label"] = x["ins_label_icf"]
         self.evaluator.update(sem_pred, ins_pred, x)
 
     def test_step(self, x: dict, idx):

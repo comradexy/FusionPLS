@@ -15,7 +15,6 @@ class MinkEncoderDecoder(nn.Module):
         super().__init__()
 
         self.input_dim = cfg.INPUT_DIM
-        self.modality = cfg.MODALITY
         self.res = cfg.RESOLUTION
         self.knn_up = knn_up(cfg.KNN_UP)
 

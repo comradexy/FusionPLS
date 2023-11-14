@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 
-class PositionalEncoder(nn.Module):
+class PositionEmbeddingSine3D(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.max_freq = cfg.MAX_FREQ
@@ -39,3 +39,34 @@ class PositionalEncoder(nn.Module):
         x = x.flatten(2)
         enc = self.zero_pad(x)
         return enc
+
+
+# todo: add positional encoding with learnable parameters
+class PositionEmbeddingLearned2D(nn.Module):
+    """
+    Absolute pos embedding, learned.
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.num_pos_feats = cfg.NUM_POS_FEATS
+        self.row_embed = nn.Embedding(50, self.num_pos_feats)
+        self.col_embed = nn.Embedding(50, self.num_pos_feats)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.uniform_(self.row_embed.weight)
+        nn.init.uniform_(self.col_embed.weight)
+
+    def forward(self, tensor_list):
+        x = tensor_list.tensors
+        h, w = x.shape[-2:]
+        i = torch.arange(w, device=x.device)
+        j = torch.arange(h, device=x.device)
+        x_emb = self.col_embed(i)
+        y_emb = self.row_embed(j)
+        pos = torch.cat([
+            x_emb.unsqueeze(0).repeat(h, 1, 1),
+            y_emb.unsqueeze(1).repeat(1, w, 1),
+        ], dim=-1).permute(2, 0, 1).unsqueeze(0).repeat(x.shape[0], 1, 1, 1)
+        return pos

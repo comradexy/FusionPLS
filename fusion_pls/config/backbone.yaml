@@ -4,18 +4,24 @@ BACKBONE:
     KNN_UP: 3
     RESOLUTION: 0.05
     INPUT_DIM: 4
-    MODALITY: xyzi
     PRETRAINED: ckpt/mink_panoptic.ckpt
     FREEZE: True
   IMG:
-    MODEL: resnet50
+    MODEL: resnet34
     PRETRAINED: True
     PATCH_SIZE: 16
     HIDDEN_DIM: 64
     INTERP_MODE: bilinear
     IMG_SIZE: [ 384, 1248 ] # [ H, W ]
-    FREEZE: False
+    FREEZE: True
   FUSION:
     N_LEVELS: 4
     OUT_DIM: 256
+    HIDDEN_DIM: 256
+    N_HEAD: 8
+    DROPOUT: 0.0
+  POS_EMB_3D:
+    MAX_FREQ: 10000
+    DIMENSIONALITY: 3
+    BASE: 2
 

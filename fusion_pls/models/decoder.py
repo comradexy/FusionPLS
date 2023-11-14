@@ -1,7 +1,7 @@
 # Modified by Rodrigo Marcuzzi from https://github.com/facebookresearch/Mask2Former
 import fusion_pls.models.blocks as blocks
 import torch
-from fusion_pls.models.pos_enc import PositionalEncoder
+from fusion_pls.models.pos_enc import PositionEmbeddingSine3D
 from torch import nn
 
 

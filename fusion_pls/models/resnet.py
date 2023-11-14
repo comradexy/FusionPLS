@@ -92,15 +92,17 @@ class ResNetEncoderDecoder(nn.Module):
             inputs: list of images, each image is a numpy array of shape [H, W, 3]
             outputs_size: list of output size, each size is a tuple of (H, W)
         Returns:
-            out_feats: multi-level features, each level is a list(len=bs) of features,
-                each feature is a torch.Tensor of shape [C, H, W]
+            out_feats: multi-level features, for each level:
+                if outputs_size is None, the shape is [B, C, H, W]
+                else, level_feat is a list of [C, Hb, Wb] torch.Tensor, len = bs
         """
         # pre-check
         assert isinstance(inputs, list), "inputs must be a list"
-        assert isinstance(outputs_size, list) or outputs_size is None, \
-            "outputs_size must be a list or None"
-        assert len(inputs) == len(outputs_size) or outputs_size is None, \
-            "inputs and outputs_size must have the same length"
+        if outputs_size is not None:
+            assert isinstance(outputs_size, list), \
+                "outputs_size must be a list or None"
+            assert len(inputs) == len(outputs_size), \
+                "inputs and outputs_size must have the same length"
 
         # unify input image size
         x = [
@@ -133,10 +135,10 @@ class ResNetEncoderDecoder(nn.Module):
         layer4_out = self.deconv_layer4(layer4_out)
 
         out_feats = [
-            [layer1_out[b] for b in range(layer1_out.shape[0])],  # 1/2
-            [layer2_out[b] for b in range(layer2_out.shape[0])],  # 1/4
-            [layer3_out[b] for b in range(layer3_out.shape[0])],  # 1/8
-            [layer4_out[b] for b in range(layer4_out.shape[0])],  # 1/16
+            layer1_out,  # 1/2
+            layer2_out,  # 1/4
+            layer3_out,  # 1/8
+            layer4_out,  # 1/16
         ]
         if outputs_size is not None:
             out_feats = [

@@ -3,7 +3,7 @@ import MinkowskiEngine as ME
 import torch
 import torch.nn.functional as F
 from fusion_pls.models.decoder import PanopticDecoder, InstanceTransformer
-from fusion_pls.models.pos_enc import PositionalEncoder
+from fusion_pls.models.pos_enc import PositionEmbeddingSine3D
 from fusion_pls.models.loss import MaskLoss, InstLoss, SemLoss
 from fusion_pls.models.mink import MinkEncoderDecoder
 from fusion_pls.models.backbone import FusionEncoder
@@ -24,7 +24,7 @@ class FusionLPS(LightningModule):
         self.backbone = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(backbone)
 
         hparams.POS_ENC.FEAT_SIZE = hparams.DECODER.HIDDEN_DIM
-        self.pos_enc = PositionalEncoder(hparams.POS_ENC)
+        self.pos_enc = PositionEmbeddingSine3D(hparams.POS_ENC)
 
         self.decoder = PanopticDecoder(
             self.backbone.out_dim,
@@ -43,8 +43,8 @@ class FusionLPS(LightningModule):
 
     def forward(self, x):
         feats, coords, pad_masks, bb_logits = self.backbone(x)
-        encoded_pos = [self.pos_enc(c) for c in coords]
-        outputs, padding = self.decoder(feats, encoded_pos, pad_masks)
+        pos = [self.pos_enc(c) for c in coords]
+        outputs, padding = self.decoder(feats, pos, pad_masks)
         return outputs, padding, bb_logits
 
     def get_loss(self, x, outputs, padding, bb_logits):

@@ -7,7 +7,6 @@ import torchvision.models as models
 from typing import Optional
 from fusion_pls.models.mink import MinkEncoderDecoder
 from fusion_pls.models.resnet import ResNetEncoderDecoder
-from fusion_pls.models.pos_enc import PositionalEncoder
 import fusion_pls.models.blocks as blocks
 
 

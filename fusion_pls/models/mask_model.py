@@ -3,7 +3,7 @@ import MinkowskiEngine as ME
 import torch
 import torch.nn.functional as F
 from fusion_pls.models.decoder import PanopticDecoder, InstanceTransformer
-from fusion_pls.models.pos_enc import PositionEmbeddingSine3D
+from fusion_pls.models.pos_enc import PositionalEncoder
 from fusion_pls.models.loss import MaskLoss, InstLoss, SemLoss
 from fusion_pls.models.mink import MinkEncoderDecoder
 from fusion_pls.models.backbone import FusionEncoder
@@ -18,16 +18,12 @@ class FusionLPS(LightningModule):
         self.save_hyperparameters(dict(hparams))
         self.cfg = hparams
 
-        self.in_camera_fov = hparams.MODEL.IN_CAMERA_FOV
-
         backbone = FusionEncoder(hparams.BACKBONE, hparams[hparams.MODEL.DATASET])
         self.backbone = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(backbone)
 
-        hparams.POS_ENC.FEAT_SIZE = hparams.DECODER.HIDDEN_DIM
-        self.pos_enc = PositionEmbeddingSine3D(hparams.POS_ENC)
-
         self.decoder = PanopticDecoder(
-            self.backbone.out_dim,
+            # self.backbone.out_dim,
+            hparams.BACKBONE.PCD.CHANNELS,
             hparams.DECODER,
             hparams[hparams.MODEL.DATASET],
         )
@@ -43,25 +39,18 @@ class FusionLPS(LightningModule):
 
     def forward(self, x):
         feats, coords, pad_masks, bb_logits = self.backbone(x)
-        pos = [self.pos_enc(c) for c in coords]
-        outputs, padding = self.decoder(feats, pos, pad_masks)
+        outputs, padding = self.decoder(feats, coords, pad_masks)
         return outputs, padding, bb_logits
 
     def get_loss(self, x, outputs, padding, bb_logits):
         losses = {}
 
-        if self.in_camera_fov:
-            dec_labels = x["dec_lab_icf"]
-            sem_labels = [
-                torch.from_numpy(i).type(torch.LongTensor).cuda()
-                for i in x["sem_label_icf"]
-            ]
-        else:
-            dec_labels = x["dec_lab_all"]
-            sem_labels = [
-                torch.from_numpy(i).type(torch.LongTensor).cuda()
-                for i in x["sem_label"]
-            ]
+        dec_labels = x["dec_lab"]
+        sem_labels = [
+            torch.from_numpy(i).type(torch.LongTensor).cuda()
+            for i in x["sem_label"]
+        ]
+
         masks = [b["masks"] for b in dec_labels]
         masks_cls = [b["masks_cls"] for b in dec_labels]
         masks_ids = [b["masks_ids"] for b in dec_labels]
@@ -113,9 +102,6 @@ class FusionLPS(LightningModule):
 
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
 
-        if self.in_camera_fov:
-            x["sem_label"] = x["sem_label_icf"]
-            x["ins_label"] = x["ins_label_icf"]
         self.evaluator.update(sem_pred, ins_pred, x)
 
         torch.cuda.empty_cache()
@@ -141,9 +127,6 @@ class FusionLPS(LightningModule):
         outputs, padding, bb_logits = self.forward(x)
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
 
-        if self.in_camera_fov:
-            x["sem_label"] = x["sem_label_icf"]
-            x["ins_label"] = x["ins_label_icf"]
         self.evaluator.update(sem_pred, ins_pred, x)
 
     def test_step(self, x: dict, idx):

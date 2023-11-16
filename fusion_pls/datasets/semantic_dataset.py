@@ -116,6 +116,7 @@ class SemanticDataset(Dataset):
         self.dataset = cfg.MODEL.DATASET
         data_path = cfg[self.dataset].PATH + "/sequences/"
         yaml_path = cfg[self.dataset].CONFIG
+        self.in_camera_fov = cfg[self.dataset].IN_CAMERA_FOV
         self.img_mean, self.img_std = cfg[self.dataset].IMG_NORM_PARAMS
 
         with open(yaml_path, "r") as stream:
@@ -226,6 +227,7 @@ class MaskSemanticDataset(Dataset):
             aug=False,
     ):
         self.dataset = dataset
+        self.in_camera_fov = dataset.in_camera_fov
         self.sub_pts = sub_pts
         self.split = split
         self.min_points = min_pts
@@ -304,37 +306,40 @@ class MaskSemanticDataset(Dataset):
 
         map_img2pcd, indices = get_map_img2pcd(xyz, tuple(image.shape[1:3]), calib)
 
-        # get sem_labels and ins_labels in camera fov
-        sem_labels_icf = sem_labels[indices]
-        ins_labels_icf = ins_labels[indices]
-
-        # get decoder labels
-        dec_lab_all = self.get_decoder_labels(
-            xyz, sem_labels, ins_labels
-        )
-        # get decoder labels in camera fov
-        dec_lab_icf = self.get_decoder_labels(
-            xyz[indices], sem_labels[indices], ins_labels[indices]
-        )
-
         # Augmentations
         # xyz contains original points coordinates
         # feats contains augmented coordinates and other textural features
         if self.split == "train" and self.aug:
-            feats = pcd_augmentations(feats)
+            xyz = pcd_augmentations(xyz)
+            # feats = pcd_augmentations(feats)
+
+        # get decoder labels
+        dec_lab = self.get_decoder_labels(
+            xyz, sem_labels, ins_labels
+        )
+
+        if self.in_camera_fov:
+            # get feats and coords in camera fov
+            feats = feats[indices]
+            xyz = xyz[indices]
+            # get sem_labels and ins_labels in camera fov
+            sem_labels = sem_labels[indices]
+            ins_labels = ins_labels[indices]
+            # get decoder labels in camera fov
+            dec_lab = self.get_decoder_labels(
+                xyz, sem_labels, ins_labels
+            )
+
 
         return (
-            xyz,  # original points coordinates
-            feats,  # augmented coordinates and pcd features
+            xyz,
+            feats,
             image,  # normalized image
             map_img2pcd,  # mapping from image to pcd, shape=[N, 2]
             indices,  # indices of points in image
             sem_labels,
             ins_labels,
-            sem_labels_icf,
-            ins_labels_icf,
-            dec_lab_all,
-            dec_lab_icf,
+            dec_lab,
             fname,  # file path of pcd
             calib,
             pose,
@@ -434,10 +439,7 @@ class BatchCollation:
             "indices",
             "sem_label",
             "ins_label",
-            "sem_label_icf",
-            "ins_label_icf",
-            "dec_lab_all",
-            "dec_lab_icf",
+            "dec_lab",
             "fname",
             "calib",
             "pose",

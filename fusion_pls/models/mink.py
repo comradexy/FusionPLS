@@ -113,8 +113,8 @@ class MinkEncoderDecoder(nn.Module):
             model_dict.update(pretrained_dict)
             self.load_state_dict(model_dict)
 
-    def forward(self, x):
-        in_field = self.TensorField(x)
+    def forward(self, feats, coords):
+        in_field = self.TensorField(feats, coords)
 
         x0 = self.stem(in_field.sparse())
         x1 = self.stage1(x0)
@@ -161,15 +161,12 @@ class MinkEncoderDecoder(nn.Module):
         ]
         return feats, coords
 
-    def TensorField(self, x):
+    def TensorField(self, feats, coords):
         """
         Build a tensor field from coordinates and features from the
         input batch
         The coordinates are quantized using the provided resolution
         """
-        feats = x
-        coords = [f[:, :3] for f in x]
-
         # get batched features
         features = torch.from_numpy(np.concatenate(feats, 0)).float()
         # get batched coordinates

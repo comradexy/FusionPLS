@@ -21,8 +21,8 @@ class PanopticDecoder(nn.Module):
         self.hidden_dim = cfg.HIDDEN_DIM
         self.nheads = cfg.NHEADS
 
-        # cfg.POS_ENC.FEAT_SIZE = cfg.HIDDEN_DIM
-        # self.pe_layer = PositionalEncoder(cfg.POS_ENC)
+        cfg.POS_ENC.FEAT_SIZE = cfg.HIDDEN_DIM
+        self.pe_layer = PositionEmbeddingSine3D(cfg.POS_ENC)
 
         self.mask_decoder = nn.ModuleList()
         self.det_decoder = nn.ModuleList()
@@ -62,42 +62,41 @@ class PanopticDecoder(nn.Module):
             self.hidden_dim,
             3,
         )
-        self.cls_pred_inst = nn.Linear(
-            self.hidden_dim,
-            data_cfg.NUM_THING_CLASSES + 1,
-        )
-        self.off_x_embed = blocks.MLP(
-            self.hidden_dim,
-            self.hidden_dim,
-            self.hidden_dim,
-            3,
-        )
-        self.off_y_embed = blocks.MLP(
-            self.hidden_dim,
-            self.hidden_dim,
-            self.hidden_dim,
-            3,
-        )
-        self.off_z_embed = blocks.MLP(
-            self.hidden_dim,
-            self.hidden_dim,
-            self.hidden_dim,
-            3,
-        )
+        if self.enable_detector:
+            self.cls_pred_inst = nn.Linear(
+                self.hidden_dim,
+                data_cfg.NUM_THING_CLASSES + 1,
+            )
+            self.off_x_embed = blocks.MLP(
+                self.hidden_dim,
+                self.hidden_dim,
+                self.hidden_dim,
+                3,
+            )
+            self.off_y_embed = blocks.MLP(
+                self.hidden_dim,
+                self.hidden_dim,
+                self.hidden_dim,
+                3,
+            )
+            self.off_z_embed = blocks.MLP(
+                self.hidden_dim,
+                self.hidden_dim,
+                self.hidden_dim,
+                3,
+            )
 
-    def forward(self, feats, coors, pad_masks):
-        mask_feats = self.mask_feat_proj(feats[-1]) + coors[-1]
-        last_pad = pad_masks[-1]
-        # last_coors = coors.copy().pop()
-        # mask_features = self.mask_feat_proj(feats.copy().pop()) + self.pe_layer(last_coors)
-        # last_pad = pad_masks.copy().pop()
+    def forward(self, feats, coords, pad_masks):
+        last_coords = coords.copy().pop()
+        mask_feats = self.mask_feat_proj(feats.copy().pop()) + self.pe_layer(last_coords)
+        last_pad = pad_masks.copy().pop()
         src = []
-        # pos = []
+        pos = []
         size_list = []
 
         for i in range(self.num_feat_levels):
             size_list.append(feats[i].shape[1])
-            # pos.append(self.pe_layer(coors[i]))
+            pos.append(self.pe_layer(coords[i]))
             feat = self.input_proj[i](feats[i])
             src.append(feat)
 
@@ -125,7 +124,7 @@ class PanopticDecoder(nn.Module):
                 query_things = self.det_decoder[i](
                     query_things,
                     src[level_index],
-                    pos=coors[level_index],
+                    pos=pos[level_index],
                     pad_mask=pad_masks[level_index],
                     query_pos=query_pos_things,
                 )
@@ -150,7 +149,7 @@ class PanopticDecoder(nn.Module):
                 src[level_index],
                 attn_mask=attn_mask,
                 pad_mask=pad_masks[level_index],
-                pos=coors[level_index],
+                pos=pos[level_index],
                 query_pos=query_pos,
             )
             # save segmentation outputs

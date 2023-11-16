@@ -10,8 +10,7 @@ DECODER:
         NHEADS: 4
         DIM_FFN: 512
         NUM_QUERIES: 50
-
-POS_ENC:
-    MAX_FREQ: 10000
-    DIMENSIONALITY: 3
-    BASE: 2
+    POS_ENC:
+        MAX_FREQ: 10000
+        DIMENSIONALITY: 3
+        BASE: 2

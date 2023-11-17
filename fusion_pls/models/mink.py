@@ -168,7 +168,8 @@ class MinkEncoderDecoder(nn.Module):
         The coordinates are quantized using the provided resolution
         """
         # get batched features
-        features = torch.from_numpy(np.concatenate(feats, 0)).float()
+        # features = torch.from_numpy(np.concatenate(feats, 0))
+        features = torch.cat(feats, 0)
         # get batched coordinates
         coordinates = ME.utils.batched_coordinates(
             [i / self.res for i in coords], dtype=torch.float32

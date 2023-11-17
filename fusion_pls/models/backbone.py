@@ -22,7 +22,11 @@ class FusionEncoder(nn.Module):
         self.pcd_enc = MinkEncoderDecoder(cfg.PCD)
 
         # init img_to_pcd pts encoder
-        self.img_enc = ResNetEncoderDecoder(cfg.IMG)
+        # self.img_enc = ResNetEncoderDecoder(cfg.IMG)
+        img_enc_cfg = cfg.PCD
+        img_enc_cfg.INPUT_DIM = 3
+        img_enc_cfg.FREEZE = False
+        self.img_enc = MinkEncoderDecoder(img_enc_cfg)
 
         # init fusion encoder
         self.n_levels = cfg.FUSION.N_LEVELS
@@ -39,12 +43,12 @@ class FusionEncoder(nn.Module):
             #         self.out_dim[level],
             #     )
             # )
-            self.img_feats_proj.append(
-                nn.Linear(
-                    cfg.IMG.HIDDEN_DIM,
-                    cfg.PCD.CHANNELS[level - self.n_levels],
-                )
-            )
+            # self.img_feats_proj.append(
+            #     nn.Linear(
+            #         cfg.IMG.HIDDEN_DIM,
+            #         cfg.PCD.CHANNELS[level - self.n_levels],
+            #     )
+            # )
             self.fusion.append(
                 AutoWeightedFeatureFusion(
                     c_in_m1=cfg.PCD.CHANNELS[level - self.n_levels],
@@ -59,31 +63,32 @@ class FusionEncoder(nn.Module):
 
     def forward(self, x):
         # get pcd feats
-        pcd_feats, coords = self.pcd_enc(x["feats"], x["pt_coord"])
+        pcd_feats = [torch.from_numpy(f).float().cuda() for f in x["feats"]]
+        pcd_feats, coords = self.pcd_enc(pcd_feats, x["pt_coord"])
 
         # get img feats
-        img_sizes = [tuple(i.shape[-2:]) for i in x['image']]
-        img_feats = self.img_enc(x['image'], img_sizes)
-        # project img_feats to pcd
+        map_img2pcd = [torch.from_numpy(m).int().cuda() for m in x["map_img2pcd"]]
+        image = [torch.from_numpy(i).float().cuda() for i in x["image"]]
         img_feats = [
-            self.proj_img2pcd(x['map_img2pcd'], level)
-            for level in img_feats
+            self.proj_img2pcd(map_img2pcd, img)
+            for img in image
         ]
-
-        # pcd_feats = [
+        img_feats, _ = self.img_enc(img_feats, x["pt_coord"])
+        # img_sizes = [tuple(i.shape[-2:]) for i in x['image']]
+        # img_feats = self.img_enc(x['image'], img_sizes)
+        # # project img_feats to pcd
+        # img_feats = [
+        #     self.proj_img2pcd(x['map_img2pcd'], level)
+        #     for level in img_feats
+        # ]
+        # img_feats = [
         #     [
-        #         self.pcd_feats_proj[l](batch)
-        #         for batch in pcd_feats[l]
+        #         self.img_feats_proj[l](batch)
+        #         for batch in img_feats[l]
         #     ]
         #     for l in range(self.n_levels)
         # ]
-        img_feats = [
-            [
-                self.img_feats_proj[l](batch)
-                for batch in img_feats[l]
-            ]
-            for l in range(self.n_levels)
-        ]
+
 
         # pad batch
         pcd_feats, batched_coords, pad_masks = self.pad_batch(coords, pcd_feats)
@@ -143,7 +148,7 @@ class FusionEncoder(nn.Module):
         """
         Project img_feats to pcd_feats
         Args:
-            map_img2pcd: list of [Ni, 2] np.ndarray
+            map_img2pcd: list of [Ni, 2] torch.Tensor
             img_feats: list of [C, H, W] torch.Tensor
         Returns:
             img2pcd_feats: list of [Ni, C] torch.Tensor

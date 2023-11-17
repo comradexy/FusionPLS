@@ -21,56 +21,55 @@ class FusionEncoder(nn.Module):
         # init raw pts encoder
         self.pcd_enc = MinkEncoderDecoder(cfg.PCD)
 
-        # # init img_to_pcd pts encoder
-        # self.img_enc = ResNetEncoderDecoder(cfg.IMG)
+        # init img_to_pcd pts encoder
+        self.img_enc = ResNetEncoderDecoder(cfg.IMG)
 
         # init fusion encoder
         self.n_levels = cfg.FUSION.N_LEVELS
         self.out_dim = cfg.FUSION.OUT_DIM
         if isinstance(self.out_dim, int):
             self.out_dim = [cfg.FUSION.OUT_DIM] * self.n_levels
-        self.pcd_feats_proj = nn.ModuleList()
-        # self.img_feats_proj = nn.ModuleList()
-        # self.fusion = nn.ModuleList()
+        # self.pcd_feats_proj = nn.ModuleList()
+        self.img_feats_proj = nn.ModuleList()
+        self.fusion = nn.ModuleList()
         for level in range(self.n_levels):
-            self.pcd_feats_proj.append(
-                nn.Linear(
-                    cfg.PCD.CHANNELS[level - self.n_levels],
-                    self.out_dim[level],
-                )
-            )
-            # self.img_feats_proj.append(
+            # self.pcd_feats_proj.append(
             #     nn.Linear(
-            #         cfg.IMG.HIDDEN_DIM,
+            #         cfg.PCD.CHANNELS[level - self.n_levels],
             #         self.out_dim[level],
             #     )
             # )
-            # self.fusion.append(
-            #     AutoWeightedFeatureFusion(
-            #         c_in_m1=self.out_dim[level],
-            #         c_in_m2=self.out_dim[level],
-            #         c_out=self.out_dim[level],
-            #     )
-            # )
+            self.img_feats_proj.append(
+                nn.Linear(
+                    cfg.IMG.HIDDEN_DIM,
+                    cfg.PCD.CHANNELS[level - self.n_levels],
+                )
+            )
+            self.fusion.append(
+                AutoWeightedFeatureFusion(
+                    c_in_m1=cfg.PCD.CHANNELS[level - self.n_levels],
+                    c_in_m2=cfg.PCD.CHANNELS[level - self.n_levels],
+                    c_out=self.out_dim[level],
+                )
+            )
 
-        # sem_head_in_dim = self.out_dim[-1]
-        sem_head_in_dim = cfg.PCD.CHANNELS[-1]
+        sem_head_in_dim = self.out_dim[-1]
+        # sem_head_in_dim = cfg.PCD.CHANNELS[-1]
         self.sem_head = nn.Linear(sem_head_in_dim, data_cfg.NUM_CLASSES)
 
     def forward(self, x):
         # get pcd feats
         pcd_feats, coords = self.pcd_enc(x["feats"], x["pt_coord"])
 
-        # # get img feats
-        # img_sizes = [tuple(i.shape[-2:]) for i in x['image']]
-        # img_feats = self.img_enc(x['image'], img_sizes)
-        # # project img_feats to pcd
-        # img_feats = [
-        #     self.proj_img2pcd(x['map_img2pcd'], level)
-        #     for level in img_feats
-        # ]
+        # get img feats
+        img_sizes = [tuple(i.shape[-2:]) for i in x['image']]
+        img_feats = self.img_enc(x['image'], img_sizes)
+        # project img_feats to pcd
+        img_feats = [
+            self.proj_img2pcd(x['map_img2pcd'], level)
+            for level in img_feats
+        ]
 
-        # # project feats to out_dim
         # pcd_feats = [
         #     [
         #         self.pcd_feats_proj[l](batch)
@@ -78,33 +77,33 @@ class FusionEncoder(nn.Module):
         #     ]
         #     for l in range(self.n_levels)
         # ]
-        # img_feats = [
-        #     [
-        #         self.img_feats_proj[l](batch)
-        #         for batch in img_feats[l]
-        #     ]
-        #     for l in range(self.n_levels)
-        # ]
+        img_feats = [
+            [
+                self.img_feats_proj[l](batch)
+                for batch in img_feats[l]
+            ]
+            for l in range(self.n_levels)
+        ]
 
         # pad batch
         pcd_feats, batched_coords, pad_masks = self.pad_batch(coords, pcd_feats)
-        # img_feats, _, _ = self.pad_batch(coords, img_feats)
-        #
-        # assert pcd_feats[0].shape[0] == img_feats[0].shape[0], \
-        #     "pcd_feats and img_feats must have the same number of points"
-        #
-        # # auto-weighted feature fusion
-        # fused_feats = []
-        # for l in range(self.n_levels):
-        #     fused_feats.append(self.fusion[l](img_feats[l], pcd_feats[l]))
+        img_feats, _, _ = self.pad_batch(coords, img_feats)
 
-        # bb_logits = self.sem_head(fused_feats[-1])
+        assert pcd_feats[0].shape[0] == img_feats[0].shape[0], \
+            "pcd_feats and img_feats must have the same number of points"
+
+        # auto-weighted feature fusion
+        fused_feats = []
+        for l in range(self.n_levels):
+            fused_feats.append(self.fusion[l](img_feats[l], pcd_feats[l]))
+
+        bb_logits = self.sem_head(fused_feats[-1])
+
+        return fused_feats, batched_coords, pad_masks, bb_logits
+
+        # bb_logits = self.sem_head(pcd_feats[-1])
         #
-        # return fused_feats, batched_coords, pad_masks, bb_logits
-
-        bb_logits = self.sem_head(pcd_feats[-1])
-
-        return pcd_feats, batched_coords, pad_masks, bb_logits
+        # return pcd_feats, batched_coords, pad_masks, bb_logits
 
     def pad_batch(self, coors, feats):
         """
@@ -162,10 +161,17 @@ class FusionEncoder(nn.Module):
 class AutoWeightedFeatureFusion(nn.Module):
     def __init__(self, c_in_m1, c_in_m2, c_out):
         super().__init__()
-        c_in = c_in_m1 + c_in_m2
-        self.weights_generator = blocks.MLP(c_in, c_in, 2, 3)
-        self.activation = torch.sigmoid
-        self.encoder = blocks.MLP(c_in, c_in, c_out, 3)
+        self.fusion_leaner = blocks.MLP(
+            input_dim=c_in_m1 + c_in_m2,
+            hidden_dim=c_in_m1 + c_in_m2,
+            output_dim=c_in_m1,
+            num_layers=3,
+        )
+        self.weight_leaner = nn.Sequential(
+            blocks.MLP(c_in_m1, c_in_m1, 1, 3),
+            nn.Sigmoid(),
+        )
+        self.feats_proj = nn.Linear(c_in_m1, c_out)
 
     def forward(
             self,
@@ -179,20 +185,13 @@ class AutoWeightedFeatureFusion(nn.Module):
         Returns:
             fused_feats: [B, N, C_out]
         """
-        assert feats_m1.shape == feats_m2.shape, \
-            "feats_m1 and feats_m2 must have the same shape"
-
         # MLP
-        weights = self.weights_generator(torch.cat([feats_m1, feats_m2], dim=2))
+        fusion_feats = self.fusion_leaner(torch.cat([feats_m1, feats_m2], dim=2))
         # sigmoid
-        weights = self.activation(weights)
+        weights = self.weight_leaner(fusion_feats)
+        # weighted sum
+        fusion_feats = weights * fusion_feats + feats_m1
+        # project
+        fusion_feats = self.feats_proj(fusion_feats)
 
-        weighted_feats_m1 = weights[..., 0].unsqueeze(-1) * feats_m1
-        weighted_feats_m2 = weights[..., 1].unsqueeze(-1) * feats_m2
-        fused_feats = torch.cat([weighted_feats_m1, weighted_feats_m2], dim=2)
-        # MLP
-        fused_feats = self.encoder(fused_feats)
-        # residual
-        fused_feats = fused_feats + feats_m1
-
-        return fused_feats
+        return fusion_feats

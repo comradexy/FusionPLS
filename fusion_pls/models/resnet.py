@@ -16,6 +16,7 @@ class ResNetEncoderDecoder(nn.Module):
         self.patch_size = cfg.PATCH_SIZE
         self.interp_mode = cfg.INTERP_MODE
         self.img_size = cfg.IMG_SIZE
+        self.dropout = cfg.DROPOUT
 
         if pretrained:
             print("Using pretrained backbone")
@@ -45,16 +46,19 @@ class ResNetEncoderDecoder(nn.Module):
 
         # Decoder
         self.deconv_layer1 = nn.Sequential(
+            nn.Dropout(p=self.dropout),
             nn.Conv2d(channels[0], self.hidden_dim, kernel_size=7, stride=1, padding=3, bias=False),
             nn.ReLU(inplace=True),
             nn.UpsamplingNearest2d(scale_factor=2),
         )
         self.deconv_layer2 = nn.Sequential(
+            nn.Dropout(p=self.dropout),
             nn.Conv2d(channels[1], self.hidden_dim, kernel_size=7, stride=1, padding=3, bias=False),
             nn.ReLU(inplace=True),
             nn.UpsamplingNearest2d(scale_factor=4),
         )
         self.deconv_layer3 = nn.Sequential(
+            nn.Dropout(p=self.dropout),
             nn.Conv2d(channels[2], 64, kernel_size=7, stride=1, padding=3, bias=False),
             nn.ReLU(inplace=True),
             nn.ConvTranspose2d(64, self.hidden_dim, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1),
@@ -62,6 +66,7 @@ class ResNetEncoderDecoder(nn.Module):
             nn.UpsamplingNearest2d(scale_factor=4),
         )
         self.deconv_layer4 = nn.Sequential(
+            nn.Dropout(p=self.dropout),
             nn.Conv2d(channels[3], 64, kernel_size=7, stride=1, padding=3, bias=False),
             nn.ReLU(inplace=True),
             nn.ConvTranspose2d(64, 64, kernel_size=3, stride=2, padding=1, dilation=1, output_padding=1),

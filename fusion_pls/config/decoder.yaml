@@ -5,11 +5,13 @@ DECODER:
     FEATURE_LEVELS: 3
     DEC_BLOCKS: 3
     NUM_QUERIES: 100
+    DROPOUT: 0.0
     DETECTOR:
         ENABLE: False
         NHEADS: 4
         DIM_FFN: 512
-        NUM_QUERIES: 50
+        NUM_QUERIES: 100
+        DROPOUT: 0.0
     POS_ENC:
         MAX_FREQ: 10000
         DIMENSIONALITY: 3

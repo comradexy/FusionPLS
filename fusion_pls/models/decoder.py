@@ -258,15 +258,16 @@ class InstanceTransformer(nn.Module):
         self.num_queries = cfg.DETECTOR.NUM_QUERIES
         self.hidden_dim = cfg.HIDDEN_DIM
         self.nheads = cfg.DETECTOR.NHEADS
+        self.dropout = cfg.DROPOUT
 
         self.cross_attention_layer = blocks.CrossAttentionLayer(
-            d_model=self.hidden_dim, nhead=self.nheads, dropout=0.0
+            d_model=self.hidden_dim, nhead=self.nheads, dropout=self.dropout
         )
         self.self_attention_layer = blocks.SelfAttentionLayer(
-            d_model=self.hidden_dim, nhead=self.nheads, dropout=0.0
+            d_model=self.hidden_dim, nhead=self.nheads, dropout=self.dropout
         )
         self.ffn_layer = blocks.FFNLayer(
-            d_model=self.hidden_dim, dim_feedforward=cfg.DETECTOR.DIM_FFN, dropout=0.0
+            d_model=self.hidden_dim, dim_feedforward=cfg.DETECTOR.DIM_FFN, dropout=self.dropout
         )
 
     def forward(
@@ -302,15 +303,16 @@ class PanopticTransformer(nn.Module):
         self.num_queries = cfg.NUM_QUERIES
         self.hidden_dim = cfg.HIDDEN_DIM
         self.nheads = cfg.NHEADS
+        self.dropout = cfg.DROPOUT
 
         self.cross_attention_layer = blocks.CrossAttentionLayer(
-            d_model=self.hidden_dim, nhead=self.nheads, dropout=0.0
+            d_model=self.hidden_dim, nhead=self.nheads, dropout=self.dropout
         )
         self.self_attention_layer = blocks.SelfAttentionLayer(
-            d_model=self.hidden_dim, nhead=self.nheads, dropout=0.0
+            d_model=self.hidden_dim, nhead=self.nheads, dropout=self.dropout
         )
         self.ffn_layer = blocks.FFNLayer(
-            d_model=self.hidden_dim, dim_feedforward=cfg.DIM_FFN, dropout=0.0
+            d_model=self.hidden_dim, dim_feedforward=cfg.DIM_FFN, dropout=self.dropout
         )
 
     def forward(

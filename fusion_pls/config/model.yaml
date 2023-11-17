@@ -17,7 +17,6 @@ TRAIN:
 MODEL:
     DATASET: KITTI
     OVERLAP_THRESHOLD: 0.8
-    IN_CAMERA_FOV: True
 
 LOSS:
     INST:
@@ -36,6 +35,7 @@ LOSS:
 KITTI:
     PATH: data/kitti
     CONFIG: datasets/semantic-kitti.yaml
+    IN_CAMERA_FOV: True
     NUM_CLASSES: 20
     NUM_THING_CLASSES: 9
     IGNORE_LABEL: 0

@@ -3,9 +3,7 @@ import MinkowskiEngine as ME
 import torch
 import torch.nn.functional as F
 from fusion_pls.models.decoder import PanopticDecoder, InstanceTransformer
-from fusion_pls.models.pos_enc import PositionalEncoder
 from fusion_pls.models.loss import MaskLoss, InstLoss, SemLoss
-from fusion_pls.models.mink import MinkEncoderDecoder
 from fusion_pls.models.backbone import FusionEncoder
 from fusion_pls.datasets.semantic_dataset import get_things_ids
 from fusion_pls.utils.evaluate_panoptic import PanopticEvaluator
@@ -22,8 +20,8 @@ class FusionLPS(LightningModule):
         self.backbone = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(backbone)
 
         self.decoder = PanopticDecoder(
-            # self.backbone.out_dim,
-            hparams.BACKBONE.PCD.CHANNELS,
+            self.backbone.out_dim,
+            # hparams.BACKBONE.PCD.CHANNELS,
             hparams.DECODER,
             hparams[hparams.MODEL.DATASET],
         )

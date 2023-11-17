@@ -10,10 +10,11 @@ BACKBONE:
     MODEL: resnet34
     PRETRAINED: True
     PATCH_SIZE: 16
-    HIDDEN_DIM: 256
+    HIDDEN_DIM: 64
     INTERP_MODE: bilinear
     IMG_SIZE: [ 384, 1248 ] # [ H, W ]
     FREEZE: False
+    DROPOUT: 0.5
   FUSION:
     N_LEVELS: 4
     OUT_DIM: 256

@@ -67,12 +67,8 @@ class FusionEncoder(nn.Module):
         pcd_feats, coords = self.pcd_enc(pcd_feats, x["pt_coord"])
 
         # get img feats
-        map_img2pcd = [torch.from_numpy(m).int().cuda() for m in x["map_img2pcd"]]
         image = [torch.from_numpy(i).float().cuda() for i in x["image"]]
-        img_feats = [
-            self.proj_img2pcd(map_img2pcd, img)
-            for img in image
-        ]
+        img_feats = self.proj_img2pcd(x['map_img2pcd'], image)
         img_feats, _ = self.img_enc(img_feats, x["pt_coord"])
         # img_sizes = [tuple(i.shape[-2:]) for i in x['image']]
         # img_feats = self.img_enc(x['image'], img_sizes)
@@ -88,7 +84,6 @@ class FusionEncoder(nn.Module):
         #     ]
         #     for l in range(self.n_levels)
         # ]
-
 
         # pad batch
         pcd_feats, batched_coords, pad_masks = self.pad_batch(coords, pcd_feats)

@@ -20,8 +20,8 @@ class FusionLPS(LightningModule):
         self.backbone = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(backbone)
 
         self.decoder = PanopticDecoder(
-            self.backbone.out_dim,
-            # hparams.BACKBONE.PCD.CHANNELS,
+            # self.backbone.out_dim,
+            hparams.BACKBONE.PCD.CHANNELS,
             hparams.DECODER,
             hparams[hparams.MODEL.DATASET],
         )

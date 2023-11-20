@@ -112,7 +112,7 @@ class ResNetEncoderDecoder(nn.Module):
         # unify input image size
         x = [
             self.interp(
-                torch.from_numpy(np.array(batch)).float().unsqueeze(0).cuda(),
+                batch.float().unsqueeze(0).cuda(),
                 size=tuple(self.img_size),
             )
             for batch in inputs

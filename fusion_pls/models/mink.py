@@ -140,25 +140,35 @@ class MinkEncoderDecoder(nn.Module):
 
         out_feats = [y1, y2, y3, y4]
 
-        # vox2feat and apply batchnorm
-        feats, coords = self.voxel_to_point(in_field, out_feats)
+        # # vox2feat and apply batchnorm
+        # feats, coords = self.voxel_to_point(in_field, out_feats)
+        #
+        # return feats, coords
 
-        return feats, coords
+        vox_feats = [vf.decomposed_features for vf in out_feats]
+        vox_coords = [vf.decomposed_coordinates for vf in out_feats]
 
-    def voxel_to_point(self, in_field, out_feats):
+        return in_field, out_feats
+
+    def voxel_to_point(self, in_field, out_feats, vox_feats=None):
         coords = [in_field.decomposed_coordinates for _ in range(len(out_feats))]
         coords = [[c * self.res for c in coords[i]] for i in range(len(coords))]
+
         bs = in_field.coordinate_manager.number_of_unique_batch_indices()
         vox_coords = [
             [l.coordinates_at(i) * self.res for i in range(bs)] for l in out_feats
         ]
+        if vox_feats is None:
+            vox_feats = [vf.decomposed_features for vf in out_feats]
+
         feats = [
             [
                 bn(self.knn_up(vox_c, vox_f, pt_c))
-                for vox_c, vox_f, pt_c in zip(vc, vf.decomposed_features, pc)
+                for vox_c, vox_f, pt_c in zip(vc, vf, pc)
             ]
-            for vc, vf, pc, bn in zip(vox_coords, out_feats, coords, self.out_bnorm)
+            for vc, vf, pc, bn in zip(vox_coords, vox_feats, coords, self.out_bnorm)
         ]
+
         return feats, coords
 
     def TensorField(self, feats, coords):

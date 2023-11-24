@@ -136,7 +136,7 @@ def TensorField(x, res):
 
 if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    # print(device)
+
     model_cfg = edict(
         yaml.safe_load(open(join(getDir(__file__), "./config/model.yaml")))
     )
@@ -149,12 +149,9 @@ if __name__ == '__main__':
     cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
     cfg.TRAIN.BATCH_SIZE = 1
 
-    # # backbone = FusionEncoder(cfg.BACKBONE, cfg[cfg.MODEL.DATASET])
-    # # backbone = backbone.to(device)
-    #
-    # # cpe = ColorPointEncoder(cfg.BACKBONE.CPE, cfg[cfg.MODEL.DATASET])
-    # # cpe = cpe.to(device)
-    #
+    mink = MinkEncoderDecoder(cfg.BACKBONE.PCD)
+    mink = mink.to(device)
+
     # model = MaskPS(cfg)
     # model.to(device)
     cfg.KITTI.PATH = '/data/dxy/SemanticKITTI/dataset'
@@ -163,14 +160,31 @@ if __name__ == '__main__':
     # 获取test DataLoader
     loader = data.train_dataloader()
     # 从DataLoader中获取迭代器
-    test_iter = iter(loader)
+    train_iter = iter(loader)
     # # 通过迭代器遍历所有样本
     # for i in tqdm(test_iter, desc='Vist dataloader'):
     #     pass
 
-    sample = next(test_iter)
-    print(sample.keys())
-    print(sample['masks_cls'][0].shape)
-    print(sample['masks_cls'][0])
-    print(sample['things_cls'][0].shape)
-    print(sample['things_cls'][0])
+    x = next(train_iter)
+    pcd_feats = [torch.from_numpy(f).float().cuda() for f in x["feats"]]
+    print("pcd_feats:")
+    for i, f in enumerate(pcd_feats):
+        print(f"batch_{i}: {f.shape}")
+
+    in_field, out_feats = mink(pcd_feats, x["pt_coord"])
+    bs = in_field.coordinate_manager.number_of_unique_batch_indices()
+
+    print("vox_feats:")
+    vox_feats = [vf.decomposed_features for vf in out_feats]
+    for i, vf in enumerate(vox_feats):
+        for j, f in enumerate(vf):
+            print(f"level_{i} batch_{j}: {f.shape}")
+
+    print("vox_coords:")
+    # vox_coords = [
+    #     [l.coordinates_at(i) * mink.res for i in range(bs)] for l in vox_feats
+    # ]
+    vox_coords = [vf.decomposed_coordinates for vf in out_feats]
+    for i, vc in enumerate(vox_coords):
+        for j, c in enumerate(vc):
+            print(f"level_{i} batch_{j}: {c.shape}")

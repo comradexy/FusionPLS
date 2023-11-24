@@ -22,99 +22,68 @@ class FusionEncoder(nn.Module):
         self.pcd_enc = MinkEncoderDecoder(cfg.PCD)
 
         # init img encoder
-        self.img_enc = ResNetEncoderDecoder(cfg.IMG)
-        # img_enc_cfg = cfg.PCD
-        # img_enc_cfg.INPUT_DIM = 3
-        # img_enc_cfg.FREEZE = False
-        # self.img_enc = MinkEncoderDecoder(img_enc_cfg)
+        # self.img_enc = ResNetEncoderDecoder(cfg.IMG)
+        # project img feats to pcd, then use mink encoder
+        img_enc_cfg = cfg.PCD
+        img_enc_cfg.INPUT_DIM = 3
+        img_enc_cfg.FREEZE = False
+        self.img_enc = MinkEncoderDecoder(img_enc_cfg)
 
         # init fusion encoder
         self.n_levels = cfg.FUSION.N_LEVELS
-        self.out_dim = cfg.FUSION.OUT_DIM
-        if isinstance(self.out_dim, int):
-            self.out_dim = [cfg.FUSION.OUT_DIM] * self.n_levels
-        # self.pcd_feats_proj = nn.ModuleList()
-        self.img_feats_proj = nn.ModuleList()
+        self.out_dim = cfg.PCD.CHANNELS[-self.n_levels:]
         self.fusion = nn.ModuleList()
         for level in range(self.n_levels):
-            # self.pcd_feats_proj.append(
-            #     nn.Linear(
-            #         cfg.PCD.CHANNELS[level - self.n_levels],
-            #         self.out_dim[level],
-            #     )
-            # )
-            # self.img_feats_proj.append(
-            #     nn.Linear(
-            #         cfg.IMG.HIDDEN_DIM,
-            #         cfg.PCD.CHANNELS[level - self.n_levels],
-            #     )
-            # )
             self.fusion.append(
-                # AutoWeightedFeatureFusion(
-                #     c_in_m1=cfg.PCD.CHANNELS[level - self.n_levels],
-                #     c_in_m2=cfg.PCD.CHANNELS[level - self.n_levels],
-                #     c_out=self.out_dim[level],
-                # )
-                MixDimensionAttentionFusion(
-                    pcd_c_in=cfg.PCD.CHANNELS[level - self.n_levels],
-                    img_c_in=cfg.IMG.HIDDEN_DIM,
-                    cla_out_size=1,
-                    sa_ks=7,
-                    csa_nhead=1,
+                AutoWeightedFeatureFusion(
+                    c_in_m1=cfg.PCD.CHANNELS[level - self.n_levels],
+                    c_in_m2=cfg.PCD.CHANNELS[level - self.n_levels],
+                    c_out=self.out_dim[level],
                 )
+                # MixDimensionAttentionFusion(
+                #     c_in=cfg.PCD.CHANNELS[level - self.n_levels],
+                #     n_heads=cfg.FUSION.N_HEADS,
+                # )
             )
 
-        # sem_head_in_dim = self.out_dim[-1]
-        sem_head_in_dim = cfg.PCD.CHANNELS[-1]
+        sem_head_in_dim = self.out_dim[-1]
         self.sem_head = nn.Linear(sem_head_in_dim, data_cfg.NUM_CLASSES)
 
     def forward(self, x):
         # get pcd feats
         pcd_feats = [torch.from_numpy(f).float().cuda() for f in x["feats"]]
-        pcd_feats, coords = self.pcd_enc(pcd_feats, x["pt_coord"])
-        # todo: use voxel feats
+        in_field, pcd_out_feats = self.pcd_enc(pcd_feats, x["pt_coord"])
+        pcd_vox_feats = [vf.decomposed_features for vf in pcd_out_feats]
+        # pcd_feats, coors = self.pcd_enc.voxel_to_point(in_field, pcd_out_feats)
+        # pcd_feats, coors, pad_masks = self.pad_batch(coors, pcd_feats)
 
-        # get img feats
+        # get img feats by mink
         image = [torch.from_numpy(i).float().cuda() for i in x["image"]]
+        img_feats = self.proj_img2pcd(x['map_img2pcd'], image)
+        _, img_out_feats = self.img_enc(img_feats, x["pt_coord"])
+        img_vox_feats = [vf.decomposed_features for vf in img_out_feats]
+        # img_feats, _ = self.img_enc.voxel_to_point(in_field, img_out_feats)
+        # img_feats, _, _ = self.pad_batch(coors, img_feats)
 
-        # use minkowski encoder
-        # img_feats = self.proj_img2pcd(x['map_img2pcd'], image)
-        # img_feats, _ = self.img_enc(img_feats, x["pt_coord"])
-
-        # use resnet encoder
-        img_sizes = [tuple(i.shape[-2:]) for i in x['image']]
-        img_feats = self.img_enc(image, img_sizes)
-        # # project img_feats to pcd
-        # img_feats = [
-        #     self.proj_img2pcd(x['map_img2pcd'], level)
-        #     for level in img_feats
-        # ]
-
-        # # pad batch
-        # pcd_feats, batched_coords, pad_masks = self.pad_batch(coords, pcd_feats)
-        # img_feats, _, _ = self.pad_batch(coords, img_feats)
-        #
-        # assert pcd_feats[0].shape[0] == img_feats[0].shape[0], \
-        #     "pcd_feats and img_feats must have the same number of points"
-        #
-        # # cross modal feature fusion
-        # fused_feats = []
-        # for l in range(self.n_levels):
-        #     fused_feats.append(self.fusion[l](img_feats[l], pcd_feats[l]))
-
-        # cross modal feature fusion
+        # multi-modal feature fusion
         fused_feats = []
         for l in range(self.n_levels):
-            fused_feats.append(self.fusion[l](img_feats[l], pcd_feats[l], x['map_img2pcd']))
-        fused_feats, batched_coords, pad_masks = self.pad_batch(coords, fused_feats)
+            fused_feats.append(
+                self.fusion[l](
+                    pcd_vox_feats[l],
+                    img_vox_feats[l],
+                )
+            )
+
+        # project vox to pts ,and batch norm
+        fused_feats, coors = self.pcd_enc.voxel_to_point(in_field, pcd_out_feats, fused_feats)
+
+        # pad batch
+        fused_feats, coors, pad_masks = self.pad_batch(coors, fused_feats)
 
         bb_logits = self.sem_head(fused_feats[-1])
 
-        return fused_feats, batched_coords, pad_masks, bb_logits
-
-        # bb_logits = self.sem_head(pcd_feats[-1])
-        #
-        # return pcd_feats, batched_coords, pad_masks, bb_logits
+        return fused_feats, coors, pad_masks, bb_logits
 
     def pad_batch(self, coors, feats):
         """
@@ -174,17 +143,18 @@ class FusionEncoder(nn.Module):
 class AutoWeightedFeatureFusion(nn.Module):
     def __init__(self, c_in_m1, c_in_m2, c_out):
         super().__init__()
+        self.feats_proj_m1 = nn.Linear(c_in_m1, c_out)
+        self.feats_proj_m2 = nn.Linear(c_in_m2, c_out)
         self.fusion_leaner = blocks.MLP(
-            input_dim=c_in_m1 + c_in_m2,
-            hidden_dim=c_in_m1 + c_in_m2,
-            output_dim=c_in_m1,
+            input_dim=c_out * 2,
+            hidden_dim=c_out * 2,
+            output_dim=c_out,
             num_layers=3,
         )
         self.weight_leaner = nn.Sequential(
-            blocks.MLP(c_in_m1, c_in_m1, 1, 3),
+            blocks.MLP(c_out, c_out, 1, 3),
             nn.Sigmoid(),
         )
-        self.feats_proj = nn.Linear(c_in_m1, c_out)
 
     def forward(
             self,
@@ -193,106 +163,139 @@ class AutoWeightedFeatureFusion(nn.Module):
     ):
         """
         Args:
-            feats_m1: [B, N, C_in_m1]
-            feats_m2: [B, N, C_in_m2]
+            feats_m1: list of [N, C_in_m1] torch.Tensor
+            feats_m2: list of [N, C_in_m2] torch.Tensor
         Returns:
-            fused_feats: [B, N, C_out]
+            fused_feats: list of [N, C_out] torch.Tensor
         """
-        # MLP
-        fusion_feats = self.fusion_leaner(torch.cat([feats_m1, feats_m2], dim=2))
-        # sigmoid
-        weights = self.weight_leaner(fusion_feats)
-        # weighted sum
-        fusion_feats = weights * fusion_feats + feats_m1
-        # project
-        fusion_feats = self.feats_proj(fusion_feats)
+        fused_feats = []
+        for f_m1, f_m2 in zip(feats_m1, feats_m2):
+            # project to same dim
+            f_m1 = self.feats_proj_m1(f_m1)
+            f_m2 = self.feats_proj_m2(f_m2)
+            # MLP
+            feats = self.fusion_leaner(torch.cat([f_m1, f_m2], dim=1))
+            # sigmoid
+            weights = self.weight_leaner(feats)
+            # weighted sum
+            feats = weights * feats + f_m1
+            fused_feats.append(feats)
 
-        return fusion_feats
+        return fused_feats
 
 
 class MixDimensionAttentionFusion(nn.Module):
-    def __init__(self, pcd_c_in, img_c_in, cla_out_size=1, sa_ks=7, csa_nhead=1):
+    def __init__(self, c_in, n_heads=1):
         super().__init__()
-        self.img_proj = nn.Linear(img_c_in, pcd_c_in)
+        self.channel_attn_m1 = ChannelAttention(c_in)
+        self.channel_attn_m2 = ChannelAttention(c_in)
+        self.ca_fusion = nn.MultiheadAttention(c_in, n_heads, batch_first=True)
 
-        self.channel_attn = ChannelAttention(pcd_c_in, cla_out_size)
-        # self.cross_attn = nn.MultiheadAttention(pcd_c_in, csa_nhead, batch_first=True)
-        self.channel_leaner = blocks.MLP(pcd_c_in, pcd_c_in * 2, pcd_c_in, 3)
+        self.spatial_attn_m1 = SpatialAttention()
+        self.spatial_attn_m2 = SpatialAttention()
+        self.sa_fusion = nn.Sequential(
+            nn.Linear(2, 1),
+            nn.Sigmoid(),
+        )
 
-        self.spatial_attn = SpatialAttention(sa_ks)
+        self.feat_fusion = nn.Sequential(
+            nn.Linear(c_in * 2, c_in),
+            nn.ReLU(True),
+            nn.Linear(c_in, c_in),
+        )
 
-    def forward(self, img_feats, pcd_feats, map_i2p):
+    def forward(self, feats_m1, feats_m2):
         """
         Args:
-            img_feats: list of [C, H, W] torch.Tensor
-            pcd_feats: list of [N, C] torch.Tensor
+            feats_m1: list of [N, C] torch.Tensor
+            feats_m2: list of [N, C] torch.Tensor
         Returns:
             fused_feats: list of [N, C] torch.Tensor
         """
-        assert len(img_feats) == len(pcd_feats), \
+        assert len(feats_m1) == len(feats_m2), \
             "Batch size of img_feats and pcd_feats must be the same"
-        assert len(img_feats) == len(map_i2p), \
-            "Batch size of img_feats and map_img2pcd must be the same"
 
         fused_feats = []
-        for b in range(len(img_feats)):
-            # img projection
-            i_feats = img_feats[b].permute(1, 2, 0).contiguous()  # [H, W, C]
-            i_feats = self.img_proj(i_feats)  # [H, W, C]
-            i_feats = i_feats.permute(2, 0, 1).contiguous()  # [C, H, W]
+        for f_m1, f_m2 in zip(feats_m1, feats_m2):
+            # unsqueeze, out: [1, N, C]
+            f_m1 = f_m1.unsqueeze(0)
+            f_m2 = f_m2.unsqueeze(0)
 
-            # channel attention
-            ca_img_feats = self.channel_attn(i_feats.unsqueeze(0))  # [1, C, 1]
-            ca_img_feats = ca_img_feats.flatten(2).permute(0, 2, 1).contiguous()
-            # p_feats, _ = self.cross_attn(pcd_feats[b].unsqueeze(0), ca_img_feats, ca_img_feats)
-            p_feats = (pcd_feats[b].unsqueeze(0) * ca_img_feats).squeeze(0)  # [N, C]
-            # p_feats = self.channel_leaner(p_feats)
+            # channel attention, out: [1, 1, C]
+            ca_f_m1 = self.channel_attn_m1(f_m1)
+            ca_f_m2 = self.channel_attn_m2(f_m2)
 
-            # spatial attention
-            sa_img_feats = self.spatial_attn(img_feats[b].unsqueeze(0))  # [1, 1, H, W]
-            # map feats to pcd
-            sa_img_feats = sa_img_feats.squeeze(0).permute(1, 2, 0).contiguous()  # [H, W, 1]
-            m = map_i2p[b]  # [N, 2]
-            sa_img_feats = sa_img_feats[m[:, 1], m[:, 0]]  # [N, 1]
-            p_feats = p_feats * sa_img_feats
+            # spatial attention, out: [1, N, 1]
+            sa_f_m1 = self.spatial_attn_m1(f_m1)
+            sa_f_m2 = self.spatial_attn_m2(f_m2)
 
             # fuse
-            fused_feats.append(p_feats)
+            ca_fused_m1 = self.ca_fusion(
+                query=ca_f_m1,
+                key=ca_f_m2,
+                value=ca_f_m2,
+            )[0]
+            ca_fused_m2 = self.ca_fusion(
+                query=ca_f_m2,
+                key=ca_f_m1,
+                value=ca_f_m1,
+            )[0]
+            f_m1 = ca_fused_m1 * f_m1
+            f_m2 = ca_fused_m2 * f_m2
+            fused_feat = self.feat_fusion(torch.cat([f_m1, f_m2], dim=2))
+
+            sa_fused = self.sa_fusion(
+                torch.cat([sa_f_m1, sa_f_m2], dim=2)
+            )
+            fused_feat = sa_fused * fused_feat
+
+            fused_feats.append(fused_feat.squeeze(0))
 
         return fused_feats
 
 
 class ChannelAttention(nn.Module):
-    def __init__(self, in_channels, output_size, ratio=8):
+    def __init__(self, in_channels, output_size=1, ratio=8):
         super(ChannelAttention, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(output_size)
-        self.max_pool = nn.AdaptiveMaxPool2d(output_size)
+        self.avg_pool = nn.AdaptiveAvgPool1d(output_size)
+        self.max_pool = nn.AdaptiveMaxPool1d(output_size)
 
-        self.fc1 = nn.Conv2d(in_channels, in_channels // ratio, 1, bias=False)
-        self.relu1 = nn.ReLU()
-        self.fc2 = nn.Conv2d(in_channels // ratio, in_channels, 1, bias=False)
+        self.fc1 = nn.Conv1d(in_channels, in_channels // ratio, 1, bias=False)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Conv1d(in_channels // ratio, in_channels, 1, bias=False)
 
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        avg_out = self.fc2(self.relu1(self.fc1(self.avg_pool(x))))
-        max_out = self.fc2(self.relu1(self.fc1(self.max_pool(x))))
-        out = avg_out + max_out
-        return self.sigmoid(out)
+        """
+        Args:
+            x: [B, N, C] torch.Tensor
+        Return:
+            [B, 1, C] torch.Tensor
+        """
+        x = x.permute(0, 2, 1).contiguous()
+        avg_out = self.fc2(self.relu(self.fc1(self.avg_pool(x))))
+        max_out = self.fc2(self.relu(self.fc1(self.max_pool(x))))
+        out = self.sigmoid(avg_out + max_out)
+        return out.permute(0, 2, 1).contiguous()
 
 
 class SpatialAttention(nn.Module):
-    def __init__(self, kernel_size=7):
+    def __init__(self):
         super(SpatialAttention, self).__init__()
-
-        assert kernel_size in (3, 7), 'kernel size must be 3 or 7'
-        padding = 3 if kernel_size == 7 else 1
-        self.conv1 = nn.Conv2d(2, 1, kernel_size, padding=padding, bias=False)
+        self.conv1 = nn.Conv1d(2, 1, 1, bias=False)
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
+        """
+        Args:
+            x: [B, N, C] torch.Tensor
+        Return:
+            [B, N, 1] torch.Tensor
+        """
+        x = x.permute(0, 2, 1).contiguous()
         avg_out = torch.mean(x, dim=1, keepdim=True)
         max_out, _ = torch.max(x, dim=1, keepdim=True)
         x = torch.cat([avg_out, max_out], dim=1)
-        x = self.conv1(x)
-        return self.sigmoid(x)
+        out = self.sigmoid(self.conv1(x))
+        return out.permute(0, 2, 1).contiguous()

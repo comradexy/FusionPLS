@@ -1,7 +1,7 @@
 # Modified by Rodrigo Marcuzzi from https://github.com/facebookresearch/Mask2Former
 import fusion_pls.models.blocks as blocks
 import torch
-from fusion_pls.models.pos_enc import PositionEmbeddingSine3D
+from fusion_pls.models.pos_enc import PositionEmbeddingSine3D, PositionEmbeddingLearned3D, MixPositionEmbedding
 from torch import nn
 
 
@@ -22,7 +22,8 @@ class PanopticDecoder(nn.Module):
         self.nheads = cfg.NHEADS
 
         cfg.POS_ENC.FEAT_SIZE = cfg.HIDDEN_DIM
-        self.pe_layer = PositionEmbeddingSine3D(cfg.POS_ENC)
+        # self.pe_layer = PositionEmbeddingSine3D(cfg.POS_ENC)
+        self.pe_layer = MixPositionEmbedding(cfg.POS_ENC)
 
         self.mask_decoder = nn.ModuleList()
         self.det_decoder = nn.ModuleList()

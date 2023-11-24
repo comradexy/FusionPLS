@@ -17,5 +17,4 @@ BACKBONE:
     DROPOUT: 0.1
   FUSION:
     N_LEVELS: 4
-    OUT_DIM: 256
-
+    N_HEADS: 1

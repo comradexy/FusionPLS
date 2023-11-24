@@ -7,6 +7,7 @@ import torch.nn as nn
 class PositionEmbeddingSine3D(nn.Module):
     def __init__(self, cfg):
         super().__init__()
+        self.range = cfg.RANGE
         self.max_freq = cfg.MAX_FREQ
         self.dimensionality = cfg.DIMENSIONALITY
         self.num_bands = math.floor(cfg.FEAT_SIZE / cfg.DIMENSIONALITY / 2)
@@ -14,15 +15,28 @@ class PositionEmbeddingSine3D(nn.Module):
         pad = cfg.FEAT_SIZE - self.num_bands * 2 * cfg.DIMENSIONALITY
         self.zero_pad = nn.ZeroPad2d((pad, 0, 0, 0))  # left padding
 
-    def forward(self, _x):
+    def forward(self, _x, coor_type="cart"):
         """
         _x [B,N,3]: batched point coordinates
         returns: [B,N,C]: positional encoding of dimension C
         """
         x = _x.clone()
-        x[:, :, 0] = x[:, :, 0] / 48
-        x[:, :, 1] = x[:, :, 1] / 48
-        x[:, :, 2] = x[:, :, 2] / 4
+        if coor_type == "cart":
+            x[:, :, 0] = x[:, :, 0] / self.range[0]
+            x[:, :, 1] = x[:, :, 1] / self.range[1]
+            x[:, :, 2] = x[:, :, 2] / self.range[2]
+        elif coor_type == "polar":
+            # transform x to polar coordinates
+            rho = torch.sqrt(x[:, :, 0] ** 2 + x[:, :, 1] ** 2)
+            phi = torch.atan2(x[:, :, 1], x[:, :, 0])
+            x = torch.stack((rho, phi, x[:, :, 2]), dim=-1)
+            # normalize
+            x[:, :, 0] = x[:, :, 0] / max(self.range[:2])
+            x[:, :, 1] = x[:, :, 1] / torch.tensor([2 * math.pi]).to(x.device)
+            x[:, :, 2] = x[:, :, 2] / self.range[2]
+        else:
+            raise NotImplementedError
+
         x = x.unsqueeze(-1)
         scales = torch.logspace(
             0.0,
@@ -41,32 +55,61 @@ class PositionEmbeddingSine3D(nn.Module):
         return enc
 
 
-# todo: add positional encoding with learnable parameters
-class PositionEmbeddingLearned2D(nn.Module):
+class PositionEmbeddingLearned3D(nn.Module):
     """
     Absolute pos embedding, learned.
     """
 
     def __init__(self, cfg):
         super().__init__()
-        self.num_pos_feats = cfg.NUM_POS_FEATS
-        self.row_embed = nn.Embedding(50, self.num_pos_feats)
-        self.col_embed = nn.Embedding(50, self.num_pos_feats)
-        self.reset_parameters()
+        self.in_dim = cfg.DIMENSIONALITY
+        self.out_dim = cfg.FEAT_SIZE
+        self.proj = nn.Linear(self.in_dim, self.out_dim)
+        self.ln = nn.LayerNorm(self.out_dim)
+        self.range = cfg.RANGE
 
-    def reset_parameters(self):
-        nn.init.uniform_(self.row_embed.weight)
-        nn.init.uniform_(self.col_embed.weight)
+    def forward(self, _x, coor_type="cart"):
+        """
+        _x [B,N,3]: batched point coordinates (cartesian)
+        returns: [B,N,C]: positional encoding of dimension C
+        """
+        x = _x.clone()
+        if coor_type == "cart":
+            x[:, :, 0] = x[:, :, 0] / self.range[0]
+            x[:, :, 1] = x[:, :, 1] / self.range[1]
+            x[:, :, 2] = x[:, :, 2] / self.range[2]
+        elif coor_type == "polar":
+            # transform x to polar coordinates
+            rho = torch.sqrt(x[:, :, 0] ** 2 + x[:, :, 1] ** 2)
+            phi = torch.atan2(x[:, :, 1], x[:, :, 0])
+            x = torch.stack((rho, phi, x[:, :, 2]), dim=-1)
+            # normalize
+            x[:, :, 0] = x[:, :, 0] / max(self.range[:2])
+            x[:, :, 1] = x[:, :, 1] / torch.tensor([2 * math.pi]).to(x.device)
+            x[:, :, 2] = x[:, :, 2] / self.range[2]
+        else:
+            raise NotImplementedError
 
-    def forward(self, tensor_list):
-        x = tensor_list.tensors
-        h, w = x.shape[-2:]
-        i = torch.arange(w, device=x.device)
-        j = torch.arange(h, device=x.device)
-        x_emb = self.col_embed(i)
-        y_emb = self.row_embed(j)
-        pos = torch.cat([
-            x_emb.unsqueeze(0).repeat(h, 1, 1),
-            y_emb.unsqueeze(1).repeat(1, w, 1),
-        ], dim=-1).permute(2, 0, 1).unsqueeze(0).repeat(x.shape[0], 1, 1, 1)
-        return pos
+        enc = self.proj(x)
+        enc = self.ln(enc)
+
+        return enc
+
+
+class MixPositionEmbedding(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.pe_cart = PositionEmbeddingSine3D(cfg)
+        self.pe_polar = PositionEmbeddingSine3D(cfg)
+        self.in_dim = cfg.DIMENSIONALITY
+        self.out_dim = cfg.FEAT_SIZE
+        self.proj = nn.Linear(self.out_dim, self.out_dim)
+        self.ln = nn.LayerNorm(self.out_dim)
+
+    def forward(self, _x):
+        enc_cart = self.pe_cart(_x, type="cart")
+        enc_polar = self.pe_polar(_x, type="polar")
+        enc = enc_cart + enc_polar
+        enc = self.proj(enc)
+        enc = self.ln(enc)
+        return enc

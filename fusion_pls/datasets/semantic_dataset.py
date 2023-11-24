@@ -310,8 +310,9 @@ class MaskSemanticDataset(Dataset):
         # xyz contains original points coordinates
         # feats contains augmented coordinates and other textural features
         if self.split == "train" and self.aug:
-            xyz = pcd_augmentations(xyz)
-            # feats = pcd_augmentations(feats)
+            # xyz = pcd_augmentations(xyz)
+            feats = pcd_augmentations(feats)
+            xyz = feats[:, :3]
 
         # get decoder labels
         dec_lab = self.get_decoder_labels(

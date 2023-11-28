@@ -10,7 +10,7 @@ from torch.cuda.amp import autocast
 from fusion_pls.utils.misc import generalized_box_iou
 
 
-class InstMatcher(nn.Module):
+class OffMatcher(nn.Module):
     """This class computes an assignment between the targets and the predictions of the network
 
         For efficiency reasons, the targets don't include the no_object. Because of this, in general,
@@ -18,7 +18,7 @@ class InstMatcher(nn.Module):
         while the others are un-matched (and thus treated as non-objects).
         """
 
-    def __init__(self, cost_cls: float = 1, cost_off: float = 1, p_ratio: float = 0.4):
+    def __init__(self, cost_off: float = 1, p_ratio: float = 0.4):
         """Creates the matcher
 
         Params:
@@ -26,10 +26,9 @@ class InstMatcher(nn.Module):
             cost_chm: This is the relative weight of the L1 error of the center heatmap in the matching cost
         """
         super().__init__()
-        self.weight_cls = cost_cls
         self.weight_off = cost_off
 
-        assert cost_cls != 0 or cost_off != 0, "all costs cant be 0"
+        assert cost_off != 0, "all costs cant be 0"
 
         self.p_ratio = p_ratio
 
@@ -40,16 +39,11 @@ class InstMatcher(nn.Module):
     @torch.no_grad()
     def memory_efficient_forward(self, outputs, targets):
         """More memory-friendly matching"""
-        bs, num_queries, num_classes = outputs["pred_logits"].shape
+        bs, num_points, num_queries = outputs["pred_off_x"].shape
         indices = []
 
         # Iterate through batch size
         for b in range(bs):
-            out_prob = outputs["pred_logits"][b].softmax(-1)
-            tgt_ids = targets["classes"][b].type(torch.int64)
-
-            cost_class = -out_prob[:, tgt_ids]
-
             out_off_x = outputs["pred_off_x"][b].permute(1, 0)  # [num_queries, num_pts]
             out_off_y = outputs["pred_off_y"][b].permute(1, 0)
             out_off_z = outputs["pred_off_z"][b].permute(1, 0)
@@ -82,7 +76,6 @@ class InstMatcher(nn.Module):
             # Final cost matrix
             C = (
                     self.weight_off * cost_offset
-                    + self.weight_cls * cost_class
             )
             C = C.reshape(num_queries, -1).cpu()
             indices.append(lsa(C))
@@ -155,8 +148,10 @@ class MaskMatcher(nn.Module):
             with autocast(enabled=False):
                 out_mask = out_mask.float()  # [num_q,num_pts]
                 tgt_mask = tgt_mask.float()  # [n_ins,num_pts]
-                cost_mask = batch_sigmoid_ce_cost_jit(out_mask, tgt_mask)
-                cost_dice = batch_dice_cost_jit(out_mask, tgt_mask)
+                # cost_mask = batch_sigmoid_ce_cost_jit(out_mask, tgt_mask)
+                # cost_dice = batch_dice_cost_jit(out_mask, tgt_mask)
+                cost_mask = batch_sigmoid_ce_cost(out_mask, tgt_mask)
+                cost_dice = batch_dice_cost(out_mask, tgt_mask)
 
             # Final cost matrix
             C = (

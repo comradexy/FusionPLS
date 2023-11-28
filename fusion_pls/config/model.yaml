@@ -1,49 +1,49 @@
 EXPERIMENT:
-    ID: fusion_lps
+  ID: fusion_lps
 
 TRAIN:
-    STEP: 50
-    DECAY: 0.1
-    LR: 0.0001
-    MAX_EPOCH: 100
-    BATCH_SIZE: 6
-    BATCH_ACC: 6
-    NUM_WORKERS: 12
-    N_GPUS: -1
+  STEP: 50
+  DECAY: 0.1
+  LR: 0.0001
+  MAX_EPOCH: 100
+  BATCH_SIZE: 6
+  BATCH_ACC: 6
+  NUM_WORKERS: 12
+  N_GPUS: -1
 
-    AUG: True
-    SUBSAMPLE: True
+  AUG: True
+  SUBSAMPLE: True
 
 MODEL:
-    DATASET: KITTI
-    OVERLAP_THRESHOLD: 0.8
+  DATASET: KITTI
+  OVERLAP_THRESHOLD: 0.8
 
 LOSS:
-    INST:
-        WEIGHTS_KEYS: [ 'inst_loss_ce', 'inst_loss_off' ]
-        WEIGHTS: [ 1.0, 5.0 ]
-    MASK:
-        WEIGHTS_KEYS: ['pan_loss_ce','pan_loss_dice','pan_loss_mask']
-        WEIGHTS: [ 2.0, 5.0, 5.0 ]
-    SEM:
-        WEIGHTS: [ 2.0, 6.0 ] #Ce, Lovasz
-    EOS_COEF: 0.1
-    NUM_POINTS: 50000
-    NUM_MASK_PTS: 500 # points to sample within each mask
-    P_RATIO: 0.4 # ratio of total points to use for the matching
+  OFFSET:
+    WEIGHTS_KEYS: [ 'loss_off' ]
+    WEIGHTS: [ 5.0 ]
+  MASK:
+    WEIGHTS_KEYS: [ 'loss_ce','loss_dice','loss_mask' ]
+    WEIGHTS: [ 2.0, 5.0, 5.0 ]
+  SEM:
+    WEIGHTS: [ 2.0, 6.0 ] #Ce, Lovasz
+  EOS_COEF: 0.1
+  NUM_POINTS: 50000
+  NUM_MASK_PTS: 500 # points to sample within each mask
+  P_RATIO: 0.4 # ratio of total points to use for the matching
 
 KITTI:
-    PATH: data/kitti
-    CONFIG: datasets/semantic-kitti.yaml
-    IN_CAMERA_FOV: True
-    NUM_CLASSES: 20
-    NUM_THING_CLASSES: 9
-    IGNORE_LABEL: 0
-    MIN_POINTS: 10 #smallest mask
-    SPACE: # coord limits
-        [[-48.0,48.0],[-48.0,48.0],[-4.0,1.5]]
-    SUB_NUM_POINTS: 80000
-    IMG_NORM_PARAMS:
-        - [ 0.485, 0.456, 0.406 ]
-        - [ 0.229, 0.224, 0.225 ]
+  PATH: data/kitti
+  CONFIG: datasets/semantic-kitti.yaml
+  IN_CAMERA_FOV: True
+  NUM_CLASSES: 20
+  NUM_THING_CLASSES: 8
+  IGNORE_LABEL: 0
+  MIN_POINTS: 10 #smallest mask
+  SPACE: # coord limits
+    [ [ -48.0,48.0 ],[ -48.0,48.0 ],[ -4.0,1.5 ] ]
+  SUB_NUM_POINTS: 80000
+  IMG_NORM_PARAMS:
+    - [ 0.485, 0.456, 0.406 ]
+    - [ 0.229, 0.224, 0.225 ]
 

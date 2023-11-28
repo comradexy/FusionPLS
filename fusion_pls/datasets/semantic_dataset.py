@@ -331,6 +331,9 @@ class MaskSemanticDataset(Dataset):
                 xyz, sem_labels, ins_labels
             )
 
+        # assert dec_lab["things_masks"].shape[0] != 0, \
+        #     "things_masks is empty," \
+        #     f"file path: {fname}"
 
         return (
             xyz,
@@ -417,6 +420,7 @@ class MaskSemanticDataset(Dataset):
             things_off[i, mask.astype(bool)] = offset
         things_cls = torch.from_numpy(things_cls)
         things_off = torch.from_numpy(things_off)
+        things_masks = torch.from_numpy(things_masks)
 
         outputs = {
             "masks": masks,
@@ -424,6 +428,7 @@ class MaskSemanticDataset(Dataset):
             "masks_ids": masks_ids,
             "things_off": things_off,
             "things_cls": things_cls,
+            "things_masks": things_masks,
             "things_masks_ids": things_masks_ids,
         }
 
@@ -618,5 +623,3 @@ def get_stuff(dataset):
 def get_things_ids(dataset):
     if dataset == "KITTI":
         return [1, 2, 3, 4, 5, 6, 7, 8]
-    elif dataset == "NUSCENES":
-        return [2, 3, 4, 5, 6, 7, 9, 10]

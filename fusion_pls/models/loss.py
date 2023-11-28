@@ -3,7 +3,7 @@ from itertools import filterfalse
 
 import torch
 import torch.nn.functional as F
-from fusion_pls.models.matcher import MaskMatcher, InstMatcher
+from fusion_pls.models.matcher import MaskMatcher, OffMatcher
 from fusion_pls.utils.misc import (get_world_size, is_dist_avail_and_initialized,
                                    pad_stack, sample_points, generalized_box_iou)
 from torch import nn
@@ -17,7 +17,7 @@ class MaskLoss(nn.Module):
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
 
-    def __init__(self, cfg, data_cfg):
+    def __init__(self, cfg, data_cfg, only_inst=False):
         """Create the criterion.
         Parameters:
             num_classes: number of object categories
@@ -27,8 +27,13 @@ class MaskLoss(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
         """
         super().__init__()
-        self.num_classes = data_cfg.NUM_CLASSES
-        self.ignore = data_cfg.IGNORE_LABEL
+        self._only_inst = only_inst
+        if self._only_inst:
+            self.num_classes = data_cfg.NUM_THING_CLASSES
+            self.ignore = -100
+        else:
+            self.num_classes = data_cfg.NUM_CLASSES
+            self.ignore = data_cfg.IGNORE_LABEL
         self.matcher = MaskMatcher(
             costs_class=cfg.MASK.WEIGHTS[0],
             cost_dice=cfg.MASK.WEIGHTS[1],
@@ -140,7 +145,7 @@ class MaskLoss(nn.Module):
             self.weights.to(pred_logits),
             ignore_index=self.ignore,
         )
-        losses = {"pan_loss_ce": loss_ce}
+        losses = {"loss_ce": loss_ce}
         return losses
 
     def loss_masks(self, outputs, targets, indices, num_masks, masks_ids):
@@ -151,6 +156,9 @@ class MaskLoss(nn.Module):
         n_masks = [m.shape[0] for m in masks]
         target_masks = pad_stack(masks)
 
+        if num_masks == 0:
+            return {"loss_mask": 0.0, "loss_dice": 0.0}
+
         pred_idx = _get_pred_permutation_idx(indices)
         tgt_idx = _get_tgt_permutation_idx(indices, n_masks)
         pred_masks = outputs["pred_masks"]
@@ -158,23 +166,28 @@ class MaskLoss(nn.Module):
         target_masks = target_masks.to(pred_masks)
         target_masks = target_masks[tgt_idx]
 
-        with torch.no_grad():
-            idx = sample_points(masks, masks_ids, self.n_mask_pts, self.num_points)
-            n_masks.insert(0, 0)
-            nm = torch.cumsum(torch.tensor(n_masks), 0)
-            point_labels = torch.cat(
-                [target_masks[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+        if self._only_inst:
+            with torch.no_grad():
+                point_labels = target_masks.clone()
+            point_logits = pred_masks.clone()
+        else:
+            with torch.no_grad():
+                idx = sample_points(masks, masks_ids, self.n_mask_pts, self.num_points)
+                n_masks.insert(0, 0)
+                nm = torch.cumsum(torch.tensor(n_masks), 0)
+                point_labels = torch.cat(
+                    [target_masks[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+                )
+            point_logits = torch.cat(
+                [pred_masks[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
             )
-        point_logits = torch.cat(
-            [pred_masks[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
-        )
 
         del pred_masks
         del target_masks
 
         losses = {
-            "pan_loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks),
-            "pan_loss_dice": dice_loss_jit(point_logits, point_labels, num_masks),
+            "loss_mask": sigmoid_ce_loss_jit(point_logits, point_labels, num_masks),
+            "loss_dice": dice_loss_jit(point_logits, point_labels, num_masks),
         }
 
         return losses
@@ -192,6 +205,17 @@ class SemLoss(nn.Module):
         lovasz = self.lovasz_softmax(F.softmax(outputs, dim=1), targets)
         loss = {"sem_ce": self.ce_w * ce, "sem_lov": self.lov_w * lovasz}
         return loss
+
+    def get_dec_loss(self, outputs, targets, padding):
+        losses = self.forward(outputs["pred_sem"][~padding], targets)
+
+        if "aux_outputs" in outputs:
+            for i, aux_outputs in enumerate(outputs["aux_outputs"]):
+                l_dict = self.forward(aux_outputs["pred_sem"][~padding], targets)
+                l_dict = {f"{i}_" + k: v for k, v in l_dict.items()}
+                losses.update(l_dict)
+
+        return losses
 
     def lovasz_grad(self, gt_sorted):
         """
@@ -293,7 +317,7 @@ class SemLoss(nn.Module):
         return acc / n
 
 
-class InstLoss(nn.Module):
+class OffLoss(nn.Module):
     """This class computes the loss for DETR.
         The process happens in two steps:
             1) we compute hungarian assignment between ground truth boxes and the outputs of the model
@@ -310,25 +334,14 @@ class InstLoss(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
         """
         super().__init__()
-        self.num_classes = data_cfg.NUM_THING_CLASSES
-        self.ignore = data_cfg.IGNORE_LABEL
-
-        self.matcher = InstMatcher(
-            cost_cls=cfg.INST.WEIGHTS[0],
-            cost_off=cfg.INST.WEIGHTS[1],
+        self.matcher = OffMatcher(
+            cost_off=cfg.OFFSET.WEIGHTS[0],
             p_ratio=cfg.P_RATIO,
         )
 
         self.weight_dict = {
-            cfg.INST.WEIGHTS_KEYS[i]: cfg.INST.WEIGHTS[i] for i in range(len(cfg.INST.WEIGHTS))
+            cfg.OFFSET.WEIGHTS_KEYS[i]: cfg.OFFSET.WEIGHTS[i] for i in range(len(cfg.OFFSET.WEIGHTS))
         }
-
-        self.eos_coef = cfg.EOS_COEF
-
-        cls_weights = torch.ones(self.num_classes + 1)
-        cls_weights[0] = 0.0
-        cls_weights[-1] = self.eos_coef
-        self.cls_weights = cls_weights
 
         # pointwise mask loss parameters
         self.num_points = cfg.NUM_POINTS
@@ -338,15 +351,13 @@ class InstLoss(nn.Module):
         """This performs the loss computation.
                 Parameters:
                      outputs: dict of tensors:
-                         pred_logits: [B, Q, NClass+1]
                          pred_off_x: [B, N_Pts, Q]
                          pred_off_y: [B, N_Pts, Q]
                          pred_off_z: [B, N_Pts, Q]
-                         aux_outputs: list of dicts ['pred_logits'], ['pred_off_x'], ['pred_off_y'],
-                                      ['pred_off_z'] for each intermediate output
+                         aux_outputs: list of dicts ['pred_off_x'], ['pred_off_y'], ['pred_off_z']
+                                    for each intermediate output
                      targets: dict of lists len BS:
-                                  classes: [N_Things, 1], class for each GT center heatmap
-                                  offsets: [N_Things, N_Pts, 3]
+                              offsets: [N_Things, N_Pts, 3]
                      masks_ids: [N_Masks] list of ids for each things_mask
                 """
         targ = targets
@@ -356,7 +367,7 @@ class InstLoss(nn.Module):
         indices = self.matcher(outputs_no_aux, targ)
 
         # Compute the average number of target boxes accross all nodes, for normalization purposes
-        num_inst = sum(len(t) for t in targ["classes"])
+        num_inst = sum(len(t) for t in targ["offsets"])
         num_inst = torch.as_tensor(
             [num_inst], dtype=torch.float, device=next(iter(outputs.values())).device
         )
@@ -366,9 +377,9 @@ class InstLoss(nn.Module):
 
         # Compute all the requested losses
         losses = {}
-        # losses.update(
-        #     self.get_losses(outputs, targ, indices, num_heatmaps, masks_ids)
-        # )
+        losses.update(
+            self.get_losses(outputs, targ, indices, num_inst, masks_ids)
+        )
 
         # In case of auxiliary losses, we repeat this process with the output of each intermediate layer.
         if "aux_outputs" in outputs:
@@ -389,44 +400,9 @@ class InstLoss(nn.Module):
 
         return losses
 
-    def get_losses(self, outputs, targets, indices, num_ints, mask_ids, do_cls=True):
-        if do_cls:
-            classes = self.loss_classes(outputs, targets, indices)
-        else:
-            classes = {}
+    def get_losses(self, outputs, targets, indices, num_ints, mask_ids):
         offsets = self.loss_offsets(outputs, targets, indices, num_ints, mask_ids)
-        classes.update(offsets)
-        return classes
-
-    def loss_classes(self, outputs, targets, indices):
-        """ Classification loss (NLL)
-            targets dicts must contain the key "classes" containing a tensor of dim [nb_target_boxes]
-        """
-        assert "pred_logits" in outputs
-        pred_logits = outputs["pred_logits"].float()
-
-        idx = _get_pred_permutation_idx(indices)
-
-        target_classes_o = torch.cat(
-            [t[J] for t, (_, J) in zip(targets["classes"], indices)]
-        ).to(pred_logits.device)
-
-        target_classes = torch.full(
-            pred_logits.shape[:2],
-            self.num_classes,  # fill with class no_obj
-            dtype=torch.int64,
-            device=pred_logits.device,
-        )
-        target_classes[idx] = target_classes_o
-
-        loss_ce = F.cross_entropy(
-            pred_logits.transpose(1, 2),
-            target_classes,
-            self.cls_weights.to(pred_logits),
-            ignore_index=self.ignore,
-        )
-        losses = {"inst_loss_ce": loss_ce}
-        return losses
+        return offsets
 
     def loss_offsets(self, outputs, targets, indices, num_inst, masks_ids):
         """Compute the losses related to the heatmaps."""
@@ -442,8 +418,8 @@ class InstLoss(nn.Module):
         target_off_y = pad_stack(offsets_y)
         target_off_z = pad_stack(offsets_z)
 
-        if target_off_x.shape[0] == 0:
-            return {"inst_loss_off": 0.0}
+        if num_inst == 0:
+            return {"loss_off": 0.0}
 
         pred_idx = _get_pred_permutation_idx(indices)
         tgt_idx = _get_tgt_permutation_idx(indices, n_inst)
@@ -465,33 +441,33 @@ class InstLoss(nn.Module):
         target_off_z = target_off_z[tgt_idx]
 
         with torch.no_grad():
-            idx = sample_points(offsets_x, masks_ids, self.n_mask_pts, self.num_points)
-            n_inst.insert(0, 0)
-            nm = torch.cumsum(torch.tensor(n_inst), 0)
-            lab_off_x = torch.cat(
-                [target_off_x[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
-            )
-            lab_off_y = torch.cat(
-                [target_off_y[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
-            )
-            lab_off_z = torch.cat(
-                [target_off_z[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
-            )
-            # lab_off_x = target_off_x.clone()
-            # lab_off_y = target_off_y.clone()
-            # lab_off_z = target_off_z.clone()
-        out_off_x = torch.cat(
-            [pred_off_x[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
-        )
-        out_off_y = torch.cat(
-            [pred_off_y[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
-        )
-        out_off_z = torch.cat(
-            [pred_off_z[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
-        )
-        # out_off_x = pred_off_x.clone()
-        # out_off_y = pred_off_y.clone()
-        # out_off_z = pred_off_z.clone()
+            # idx = sample_points(offsets_x, masks_ids, self.n_mask_pts, self.num_points)
+            # n_inst.insert(0, 0)
+            # nm = torch.cumsum(torch.tensor(n_inst), 0)
+            # lab_off_x = torch.cat(
+            #     [target_off_x[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+            # )
+            # lab_off_y = torch.cat(
+            #     [target_off_y[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+            # )
+            # lab_off_z = torch.cat(
+            #     [target_off_z[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+            # )
+            lab_off_x = target_off_x.clone()
+            lab_off_y = target_off_y.clone()
+            lab_off_z = target_off_z.clone()
+        # out_off_x = torch.cat(
+        #     [pred_off_x[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+        # )
+        # out_off_y = torch.cat(
+        #     [pred_off_y[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+        # )
+        # out_off_z = torch.cat(
+        #     [pred_off_z[nm[i]: nm[i + 1]][:, p] for i, p in enumerate(idx)]
+        # )
+        out_off_x = pred_off_x.clone()
+        out_off_y = pred_off_y.clone()
+        out_off_z = pred_off_z.clone()
 
         del pred_off_x
         del pred_off_y
@@ -504,7 +480,7 @@ class InstLoss(nn.Module):
         loss_off_y = smooth_l1_cost(out_off_y, lab_off_y)
         loss_off_z = smooth_l1_cost(out_off_z, lab_off_z)
 
-        losses = {"inst_loss_off": loss_off_x + loss_off_y + loss_off_z}
+        losses = {"loss_off": loss_off_x + loss_off_y + loss_off_z}
 
         return losses
 

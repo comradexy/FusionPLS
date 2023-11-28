@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 
 
-class PositionEmbeddingSine3D(nn.Module):
+class PositionEncoding3D(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.range = cfg.RANGE
@@ -99,16 +99,16 @@ class PositionEmbeddingLearned3D(nn.Module):
 class MixPositionEmbedding(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        self.pe_cart = PositionEmbeddingSine3D(cfg)
-        self.pe_polar = PositionEmbeddingSine3D(cfg)
+        self.pe_cart = PositionEncoding3D(cfg)
+        self.pe_polar = PositionEncoding3D(cfg)
         self.in_dim = cfg.DIMENSIONALITY
         self.out_dim = cfg.FEAT_SIZE
         self.proj = nn.Linear(self.out_dim, self.out_dim)
         self.ln = nn.LayerNorm(self.out_dim)
 
     def forward(self, _x):
-        enc_cart = self.pe_cart(_x, type="cart")
-        enc_polar = self.pe_polar(_x, type="polar")
+        enc_cart = self.pe_cart(_x, coor_type="cart")
+        enc_polar = self.pe_polar(_x, coor_type="polar")
         enc = enc_cart + enc_polar
         enc = self.proj(enc)
         enc = self.ln(enc)

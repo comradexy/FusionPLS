@@ -2,8 +2,8 @@ import fusion_pls.utils.testing as testing
 import MinkowskiEngine as ME
 import torch
 import torch.nn.functional as F
-from fusion_pls.models.decoder import PanopticDecoder, InstanceTransformer
-from fusion_pls.models.loss import MaskLoss, InstLoss, SemLoss
+from fusion_pls.models.decoder import PanopticMaskDecoder
+from fusion_pls.models.loss import MaskLoss, OffLoss, SemLoss
 from fusion_pls.models.backbone import FusionEncoder
 from fusion_pls.datasets.semantic_dataset import get_things_ids
 from fusion_pls.utils.evaluate_panoptic import PanopticEvaluator
@@ -19,16 +19,15 @@ class FusionLPS(LightningModule):
         backbone = FusionEncoder(hparams.BACKBONE, hparams[hparams.MODEL.DATASET])
         self.backbone = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(backbone)
 
-        self.decoder = PanopticDecoder(
+        self.decoder = PanopticMaskDecoder(
             self.backbone.out_dim,
-            # hparams.BACKBONE.PCD.CHANNELS,
             hparams.DECODER,
             hparams[hparams.MODEL.DATASET],
         )
-        self.enable_detector = hparams.DECODER.DETECTOR.ENABLE
 
         self.mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
-        self.inst_loss = InstLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
+        self.inst_mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET], only_inst=True)
+        self.off_loss = OffLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
         self.sem_loss = SemLoss(hparams.LOSS.SEM.WEIGHTS)
 
         self.evaluator = PanopticEvaluator(
@@ -48,29 +47,48 @@ class FusionLPS(LightningModule):
             torch.from_numpy(i).type(torch.LongTensor).cuda()
             for i in x["sem_label"]
         ]
+        sem_labels = torch.cat([s.squeeze(1) for s in sem_labels], dim=0)
 
         masks = [b["masks"] for b in dec_labels]
         masks_cls = [b["masks_cls"] for b in dec_labels]
         masks_ids = [b["masks_ids"] for b in dec_labels]
         things_cls = [b["things_cls"] for b in dec_labels]
         things_off = [b["things_off"] for b in dec_labels]
+        things_masks = [b["things_masks"] for b in dec_labels]
         things_masks_ids = [b["things_masks_ids"] for b in dec_labels]
 
-        # calculate mask loss
+        # calculate semantic decoder loss
         mask_targets = {"classes": masks_cls, "masks": masks}
-        loss_mask = self.mask_loss(outputs["pan_outputs"], mask_targets, masks_ids)
-        losses.update(loss_mask)
+        loss_sem = self.mask_loss(outputs["sem_outputs"], mask_targets, masks_ids)
+        loss_sem.update(self.sem_loss.get_dec_loss(outputs["sem_outputs"], sem_labels, padding))
+        loss_sem = {
+            f"sem_{k}": v for k, v in loss_sem.items()
+        }
+        losses.update(loss_sem)
 
-        # calculate instance loss
-        if self.enable_detector:
-            inst_targets = {"classes": things_cls, "offsets": things_off}
-            loss_inst = self.inst_loss(outputs["inst_outputs"], inst_targets, things_masks_ids)
-            losses.update(loss_inst)
+        # calculate instance decoder loss
+        inst_off_targets = {"offsets": things_off}
+        inst_mask_targets = {"classes": things_cls, "masks": things_masks}
+        loss_inst = self.off_loss(outputs["inst_outputs"], inst_off_targets, things_masks_ids)
+        loss_inst.update(self.inst_mask_loss(outputs["inst_outputs"], inst_mask_targets, things_masks_ids))
+        loss_inst = {
+            f"inst_{k}": v for k, v in loss_inst.items()
+        }
+        losses.update(loss_inst)
 
-        # calculate semantic loss
-        sem_labels = torch.cat([s.squeeze(1) for s in sem_labels], dim=0)
+        # calculate panoptic decoder loss
+        loss_pan = self.mask_loss(outputs["pan_outputs"], mask_targets, masks_ids)
+        loss_pan = {
+            f"pan_{k}": v for k, v in loss_pan.items()
+        }
+        losses.update(loss_pan)
+
+        # calculate backbone semantic loss
         bb_logits = bb_logits[~padding]
         loss_sem_bb = self.sem_loss(bb_logits, sem_labels)
+        loss_sem_bb = {
+            f"bbs_{k}": v for k, v in loss_sem_bb.items()
+        }
         losses.update(loss_sem_bb)
 
         return losses

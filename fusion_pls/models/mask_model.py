@@ -19,6 +19,8 @@ class FusionLPS(LightningModule):
         backbone = FusionEncoder(hparams.BACKBONE, hparams[hparams.MODEL.DATASET])
         self.backbone = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(backbone)
 
+        self.enable_inst_dec = hparams.DECODER.INSTANCE.ENABLE
+        self.enable_sem_dec = hparams.DECODER.SEMANTIC.ENABLE
         self.decoder = PanopticMaskDecoder(
             self.backbone.out_dim,
             hparams.DECODER,
@@ -28,7 +30,7 @@ class FusionLPS(LightningModule):
         self.mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
         self.inst_mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET], only_inst=True)
         self.off_loss = OffLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
-        self.sem_loss = SemLoss(hparams.LOSS.SEM.WEIGHTS)
+        self.sem_loss = SemLoss(hparams.LOSS)
 
         self.evaluator = PanopticEvaluator(
             hparams[hparams.MODEL.DATASET], hparams.MODEL.DATASET
@@ -58,25 +60,27 @@ class FusionLPS(LightningModule):
         things_masks_ids = [b["things_masks_ids"] for b in dec_labels]
 
         # calculate semantic decoder loss
-        mask_targets = {"classes": masks_cls, "masks": masks}
-        loss_sem = self.mask_loss(outputs["sem_outputs"], mask_targets, masks_ids)
-        loss_sem.update(self.sem_loss.get_dec_loss(outputs["sem_outputs"], sem_labels, padding))
-        loss_sem = {
-            f"sem_{k}": v for k, v in loss_sem.items()
-        }
-        losses.update(loss_sem)
+        if self.enable_sem_dec:
+            # loss_sem = self.mask_loss(outputs["sem_outputs"], mask_targets, masks_ids)
+            loss_sem = self.sem_loss.get_dec_loss(outputs["sem_outputs"], sem_labels, padding)
+            loss_sem = {
+                f"sem_{k}": v for k, v in loss_sem.items()
+            }
+            losses.update(loss_sem)
 
         # calculate instance decoder loss
-        inst_off_targets = {"offsets": things_off}
-        inst_mask_targets = {"classes": things_cls, "masks": things_masks}
-        loss_inst = self.off_loss(outputs["inst_outputs"], inst_off_targets, things_masks_ids)
-        loss_inst.update(self.inst_mask_loss(outputs["inst_outputs"], inst_mask_targets, things_masks_ids))
-        loss_inst = {
-            f"inst_{k}": v for k, v in loss_inst.items()
-        }
-        losses.update(loss_inst)
+        if self.enable_inst_dec:
+            inst_off_targets = {"offsets": things_off}
+            inst_mask_targets = {"classes": things_cls, "masks": things_masks}
+            loss_inst = self.off_loss(outputs["inst_outputs"], inst_off_targets, things_masks_ids)
+            loss_inst.update(self.inst_mask_loss(outputs["inst_outputs"], inst_mask_targets, things_masks_ids))
+            loss_inst = {
+                f"inst_{k}": v for k, v in loss_inst.items()
+            }
+            losses.update(loss_inst)
 
         # calculate panoptic decoder loss
+        mask_targets = {"classes": masks_cls, "masks": masks}
         loss_pan = self.mask_loss(outputs["pan_outputs"], mask_targets, masks_ids)
         loss_pan = {
             f"pan_{k}": v for k, v in loss_pan.items()
@@ -84,12 +88,25 @@ class FusionLPS(LightningModule):
         losses.update(loss_pan)
 
         # calculate backbone semantic loss
-        bb_logits = bb_logits[~padding]
-        loss_sem_bb = self.sem_loss(bb_logits, sem_labels)
-        loss_sem_bb = {
-            f"bbs_{k}": v for k, v in loss_sem_bb.items()
-        }
-        losses.update(loss_sem_bb)
+        # bb_logits = bb_logits[~padding]
+        # loss_sem_bb = self.sem_loss(bb_logits, sem_labels)
+        # loss_sem_bb = {
+        #     f"bbs_{k}": v for k, v in loss_sem_bb.items()
+        # }
+        # losses.update(loss_sem_bb)
+
+        # bb_logits_pcd = bb_logits[0][~padding]
+        # bb_logits_img = bb_logits[1][~padding]
+        # loss_sem_bb_pcd = self.sem_loss(bb_logits_pcd, sem_labels)
+        # loss_sem_bb_img = self.sem_loss(bb_logits_img, sem_labels)
+        # loss_sem_bb_pcd = {
+        #     f"bbsp_{k}": v for k, v in loss_sem_bb_pcd.items()
+        # }
+        # losses.update(loss_sem_bb_pcd)
+        # loss_sem_bb_img = {
+        #     f"bbsi_{k}": v for k, v in loss_sem_bb_img.items()
+        # }
+        # losses.update(loss_sem_bb_img)
 
         return losses
 

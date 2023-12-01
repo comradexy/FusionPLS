@@ -8,7 +8,7 @@ TRAIN:
   MAX_EPOCH: 100
   BATCH_SIZE: 6
   BATCH_ACC: 6
-  NUM_WORKERS: 12
+  NUM_WORKERS: 16
   N_GPUS: -1
 
   AUG: True
@@ -26,6 +26,7 @@ LOSS:
     WEIGHTS_KEYS: [ 'loss_ce','loss_dice','loss_mask' ]
     WEIGHTS: [ 2.0, 5.0, 5.0 ]
   SEM:
+    DEC_RATIO: 0.5
     WEIGHTS: [ 2.0, 6.0 ] #Ce, Lovasz
   EOS_COEF: 0.1
   NUM_POINTS: 50000

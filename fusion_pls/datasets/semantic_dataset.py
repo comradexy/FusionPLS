@@ -65,11 +65,12 @@ class SemanticDatasetModule(LightningDataModule):
         self.label_names = train_set.label_names
 
     def train_dataloader(self):
+        batch_size = self.cfg.TRAIN.BATCH_SIZE
         dataset = self.train_mask_set
-        collate_fn = BatchCollation()
+        collate_fn = BatchCollation(dataset, batch_size)
         self.train_loader = DataLoader(
             dataset=dataset,
-            batch_size=self.cfg.TRAIN.BATCH_SIZE,
+            batch_size=batch_size,
             collate_fn=collate_fn,
             shuffle=True,
             num_workers=self.cfg.TRAIN.NUM_WORKERS,
@@ -80,11 +81,12 @@ class SemanticDatasetModule(LightningDataModule):
         return self.train_loader
 
     def val_dataloader(self):
+        batch_size = self.cfg.TRAIN.BATCH_SIZE
         dataset = self.val_mask_set
-        collate_fn = BatchCollation()
+        collate_fn = BatchCollation(dataset, batch_size)
         self.valid_loader = DataLoader(
             dataset=dataset,
-            batch_size=self.cfg.TRAIN.BATCH_SIZE,
+            batch_size=batch_size,
             collate_fn=collate_fn,
             shuffle=False,
             num_workers=self.cfg.TRAIN.NUM_WORKERS,
@@ -95,11 +97,12 @@ class SemanticDatasetModule(LightningDataModule):
         return self.valid_loader
 
     def test_dataloader(self):
+        batch_size = self.cfg.TRAIN.BATCH_SIZE
         dataset = self.test_mask_set
-        collate_fn = BatchCollation()
+        collate_fn = BatchCollation(dataset, batch_size)
         self.test_loader = DataLoader(
             dataset=dataset,
-            batch_size=self.cfg.TRAIN.BATCH_SIZE,
+            batch_size=batch_size,
             collate_fn=collate_fn,
             shuffle=False,
             num_workers=self.cfg.TRAIN.NUM_WORKERS,
@@ -335,6 +338,9 @@ class MaskSemanticDataset(Dataset):
         #     "things_masks is empty," \
         #     f"file path: {fname}"
 
+        if dec_lab["things_masks"].shape[0] == 0:
+            return None
+
         return (
             xyz,
             feats,
@@ -436,7 +442,7 @@ class MaskSemanticDataset(Dataset):
 
 
 class BatchCollation:
-    def __init__(self):
+    def __init__(self, dataset, batch_size):
         self.keys = [
             "pt_coord",
             "feats",
@@ -450,9 +456,25 @@ class BatchCollation:
             "calib",
             "pose",
         ]
+        self.dataset = dataset
+        self.batch_size = batch_size
 
     def __call__(self, data):
-        return {self.keys[i]: list(x) for i, x in enumerate(zip(*data))}
+        # return {self.keys[i]: list(x) for i, x in enumerate(zip(*data))}
+
+        filtered_data = list(filter(lambda x: x is not None, data))
+        if len(filtered_data) < self.batch_size:
+            # get additional samples from dataset
+            num_samples = self.batch_size - len(filtered_data)
+            add_samples = []
+            for i in range(num_samples):
+                s = self.dataset[np.random.randint(len(self.dataset))]
+                while s is None:
+                    s = self.dataset[np.random.randint(len(self.dataset))]
+                add_samples.append(s)
+            filtered_data.extend(add_samples)
+
+        return {self.keys[i]: list(x) for i, x in enumerate(zip(*filtered_data))}
 
 
 def absoluteFilePaths(directory):

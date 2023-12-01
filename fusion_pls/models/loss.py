@@ -194,24 +194,28 @@ class MaskLoss(nn.Module):
 
 
 class SemLoss(nn.Module):
-    def __init__(self, w):
+    def __init__(self, cfg):
         super().__init__()
-
-        self.ce_w, self.lov_w = w
+        self.dec_ratio = cfg.SEM.DEC_RATIO
+        self.ce_w, self.lov_w = cfg.SEM.WEIGHTS
         self.cross_entropy = torch.nn.CrossEntropyLoss(ignore_index=0)
 
-    def forward(self, outputs, targets):
+    def forward(self, outputs, targets, dec_loss=False):
         ce = self.cross_entropy(outputs, targets)
         lovasz = self.lovasz_softmax(F.softmax(outputs, dim=1), targets)
-        loss = {"sem_ce": self.ce_w * ce, "sem_lov": self.lov_w * lovasz}
+        if dec_loss:
+            loss = {"sem_ce": self.dec_ratio * self.ce_w * ce,
+                    "sem_lov": self.dec_ratio * self.lov_w * lovasz}
+        else:
+            loss = {"sem_ce": self.ce_w * ce, "sem_lov": self.lov_w * lovasz}
         return loss
 
     def get_dec_loss(self, outputs, targets, padding):
-        losses = self.forward(outputs["pred_sem"][~padding], targets)
+        losses = self.forward(outputs["pred_sem"][~padding], targets, dec_loss=False)
 
         if "aux_outputs" in outputs:
             for i, aux_outputs in enumerate(outputs["aux_outputs"]):
-                l_dict = self.forward(aux_outputs["pred_sem"][~padding], targets)
+                l_dict = self.forward(aux_outputs["pred_sem"][~padding], targets, dec_loss=True)
                 l_dict = {f"{i}_" + k: v for k, v in l_dict.items()}
                 losses.update(l_dict)
 

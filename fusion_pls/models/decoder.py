@@ -16,6 +16,8 @@ class PanopticMaskDecoder(nn.Module):
         # query embeddings
         self.query_feat = nn.Embedding(self.num_queries, self.d_model)
         self.query_embed = nn.Embedding(self.num_queries, self.d_model)
+        self.query_feat_ths = nn.Embedding(self.num_queries, self.d_model)
+        self.query_embed_ths = nn.Embedding(self.num_queries, self.d_model)
 
         self.cfg_pan = edict(cfg.PANOPTIC)
         self.cfg_pan.NUM_CLASSES = data_cfg.NUM_CLASSES
@@ -33,16 +35,18 @@ class PanopticMaskDecoder(nn.Module):
         self.cfg_pe = edict(cfg.POS_ENC)
         self.cfg_pe.FEAT_SIZE = self.cfg_pan.D_MODEL
 
-        if self.cfg_inst.ENABLE and self.cfg_sem.ENABLE:
-            assert self.cfg_sem.NUM_QUERIES == self.cfg_pan.NUM_QUERIES, \
-                "NUM_QUERIES in cfg.SEMANTIC must be equal to NUM_QUERIES in cfg.PANOPTIC."
+        if self.cfg_inst.ENABLE:
             assert self.cfg_inst.NUM_QUERIES == self.cfg_pan.NUM_QUERIES, \
                 "NUM_QUERIES in cfg.INSTANCE must be equal to NUM_QUERIES in cfg.PANOPTIC."
+        if self.cfg_sem.ENABLE:
+            assert self.cfg_sem.NUM_QUERIES == self.cfg_pan.NUM_QUERIES, \
+                "NUM_QUERIES in cfg.SEMANTIC must be equal to NUM_QUERIES in cfg.PANOPTIC."
 
         # decoder blocks
         self.pan_decoder = MaskSegmentor(self.cfg_pan, mode='panoptic')
         self.sem_decoder = MaskSegmentor(self.cfg_sem, mode='semantic')
         self.inst_decoder = MaskSegmentor(self.cfg_inst, mode='instance')
+        self.query_fusion = blocks.CrossAttentionLayer(d_model=self.d_model, nhead=8)
         # position embedding
         self.pe_layer = PositionEncoding3D(self.cfg_pe)
 
@@ -75,36 +79,43 @@ class PanopticMaskDecoder(nn.Module):
         bs = src[0].shape[0]
         query = self.query_feat.weight.unsqueeze(0).repeat(bs, 1, 1)
         query_pos = self.query_embed.weight.unsqueeze(0).repeat(bs, 1, 1)
+        query_ths = self.query_feat_ths.weight.unsqueeze(0).repeat(bs, 1, 1)
+        query_pos_ths = self.query_embed_ths.weight.unsqueeze(0).repeat(bs, 1, 1)
 
         out = {}
-        pred_cls_sem, pred_mask_sem, pred_sem, query = self.sem_decoder(
-            query, query_pos, src, pos, mask_feats, last_pad, pad_masks
-        )
-        pred_cls_inst, pred_mask_inst, pred_off_inst, query = self.inst_decoder(
-            query, query_pos, src, pos, mask_feats, last_pad, pad_masks
-        )
+        if self.cfg_sem.ENABLE:
+            pred_sem = self.sem_decoder(
+                query, query_pos, src, pos, mask_feats, last_pad, pad_masks
+            )
+            out["sem_outputs"] = {
+                "pred_sem": pred_sem[-1],
+                "aux_outputs": self.set_aux_sem(pred_sem)
+            }
+
+        if self.cfg_inst.ENABLE:
+            pred_cls_inst, pred_mask_inst, pred_off_inst, query_ths = self.inst_decoder(
+                query_ths, query_pos_ths, src, pos, mask_feats, last_pad, pad_masks
+            )
+            query = self.query_fusion(
+                q_embed=query,
+                bb_feat=query_ths,
+                pos=query_pos_ths,
+                query_pos=query_pos,
+            )
+            out["inst_outputs"] = {
+                "pred_logits": pred_cls_inst[-1],
+                "pred_masks": pred_mask_inst[-1],
+                "pred_off_x": pred_off_inst[0][-1],
+                "pred_off_y": pred_off_inst[1][-1],
+                "pred_off_z": pred_off_inst[2][-1],
+                "aux_outputs": self.set_aux_inst(pred_cls_inst,
+                                                 pred_mask_inst,
+                                                 pred_off_inst)
+            }
+
         pred_cls_pan, pred_mask_pan, query = self.pan_decoder(
             query, query_pos, src, pos, mask_feats, last_pad, pad_masks
         )
-
-        out["sem_outputs"] = {
-            "pred_logits": pred_cls_sem[-1],
-            "pred_masks": pred_mask_sem[-1],
-            "pred_sem": pred_sem[-1],
-            "aux_outputs": self.set_aux_sem(pred_cls_sem,
-                                            pred_mask_sem,
-                                            pred_sem)
-        }
-        out["inst_outputs"] = {
-            "pred_logits": pred_cls_inst[-1],
-            "pred_masks": pred_mask_inst[-1],
-            "pred_off_x": pred_off_inst[0][-1],
-            "pred_off_y": pred_off_inst[1][-1],
-            "pred_off_z": pred_off_inst[2][-1],
-            "aux_outputs": self.set_aux_inst(pred_cls_inst,
-                                             pred_mask_inst,
-                                             pred_off_inst)
-        }
         out["pan_outputs"] = {
             "pred_logits": pred_cls_pan[-1],
             "pred_masks": pred_mask_pan[-1],
@@ -126,11 +137,10 @@ class PanopticMaskDecoder(nn.Module):
         ]
 
     @torch.jit.unused
-    def set_aux_sem(self, outputs_class, outputs_mask, outputs_sem):
+    def set_aux_sem(self, outputs_sem):
         return [
-            {"pred_logits": cls, "pred_masks": mask, "pred_sem": sem}
-            for cls, mask, sem in
-            zip(outputs_class[:-1], outputs_mask[:-1], outputs_sem[:-1])
+            {"pred_sem": sem}
+            for sem in outputs_sem[:-1]
         ]
 
     @torch.jit.unused
@@ -187,16 +197,16 @@ class MaskSegmentor(nn.Module):
                 3,
             )
         elif mode == 'semantic':
-            self.cls_pred = nn.Linear(
-                self.d_model,
-                self.num_classes + 1,
-            )
-            self.mask_embed = blocks.MLP(
-                self.d_model,
-                self.d_model,
-                self.d_model,
-                3,
-            )
+            # self.cls_pred = nn.Linear(
+            #     self.d_model,
+            #     self.num_classes + 1,
+            # )
+            # self.mask_embed = blocks.MLP(
+            #     self.d_model,
+            #     self.d_model,
+            #     self.d_model,
+            #     3,
+            # )
             self.sem_pred = nn.Linear(
                 self.d_model,
                 self.num_classes,
@@ -323,42 +333,43 @@ class MaskSegmentor(nn.Module):
             for i in range(self.num_layers):
                 level_index = i % self.num_feat_levels
 
-                outputs_class, outputs_mask, attn_mask = self.mask_pred_heads(
-                    query,
-                    mask_feats,
-                    pad_mask=last_pad,
-                )
+                # outputs_class, outputs_mask, attn_mask = self.mask_pred_heads(
+                #     query,
+                #     mask_feats,
+                #     pad_mask=last_pad,
+                # )
                 outputs_sem = self.sem_pred_heads(src[level_index])
-                if attn_mask is not None:
-                    attn_mask[torch.where(attn_mask.sum(-1) == attn_mask.shape[-1])] = False
+                # if attn_mask is not None:
+                #     attn_mask[torch.where(attn_mask.sum(-1) == attn_mask.shape[-1])] = False
 
-                query = self.decoder[i](
-                    query,
-                    src[level_index],
-                    attn_mask=attn_mask,
-                    pad_mask=pad_masks[level_index],
-                    pos=pos[level_index],
-                    query_pos=query_pos,
-                )
+                # query = self.decoder[i](
+                #     query,
+                #     src[level_index],
+                #     attn_mask=attn_mask,
+                #     pad_mask=pad_masks[level_index],
+                #     pos=pos[level_index],
+                #     query_pos=query_pos,
+                # )
 
-                pred_cls.append(outputs_class)
-                pred_mask.append(outputs_mask)
+                # pred_cls.append(outputs_class)
+                # pred_mask.append(outputs_mask)
                 pred_sem.append(outputs_sem)
 
-            outputs_class, outputs_mask, attn_mask = self.mask_pred_heads(
-                query,
-                mask_feats,
-                pad_mask=last_pad,
-            )
+            # outputs_class, outputs_mask, attn_mask = self.mask_pred_heads(
+            #     query,
+            #     mask_feats,
+            #     pad_mask=last_pad,
+            # )
             outputs_sem = self.sem_pred_heads(mask_feats)
 
-            pred_cls.append(outputs_class)
-            pred_mask.append(outputs_mask)
+            # pred_cls.append(outputs_class)
+            # pred_mask.append(outputs_mask)
             pred_sem.append(outputs_sem)
 
-            assert len(pred_cls) == self.num_layers + 1
+            # assert len(pred_cls) == self.num_layers + 1
 
-            return pred_cls, pred_mask, pred_sem, query
+            # return pred_cls, pred_mask, pred_sem, query
+            return pred_sem
         else:
             raise NotImplementedError
 
@@ -450,7 +461,7 @@ class TransformerLayer(nn.Module):
     ):
         assert queries.shape[-1] == self.d_model and feats.shape[-1] == self.d_model, \
             "queries and feats must have the same dimensionality," \
-            f"got {queries.shape[-1]} and { feats.shape[-1]} respectively"
+            f"got {queries.shape[-1]} and {feats.shape[-1]} respectively"
 
         # cross-attention first
         queries = self.cross_attention_layer(

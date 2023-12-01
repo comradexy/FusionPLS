@@ -46,7 +46,7 @@ class PanopticMaskDecoder(nn.Module):
         self.pan_decoder = MaskSegmentor(self.cfg_pan, mode='panoptic')
         self.sem_decoder = MaskSegmentor(self.cfg_sem, mode='semantic')
         self.inst_decoder = MaskSegmentor(self.cfg_inst, mode='instance')
-        self.query_fusion = blocks.CrossAttentionLayer(d_model=self.d_model, nhead=8)
+        self.query_fusion = QueryFusionModule(d_model=self.d_model, nhead=8)
         # position embedding
         self.pe_layer = PositionEncoding3D(self.cfg_pe)
 
@@ -96,11 +96,11 @@ class PanopticMaskDecoder(nn.Module):
             pred_cls_inst, pred_mask_inst, pred_off_inst, query_ths = self.inst_decoder(
                 query_ths, query_pos_ths, src, pos, mask_feats, last_pad, pad_masks
             )
-            query = query + self.query_fusion(
-                q_embed=query,
-                bb_feat=query_ths,
-                pos=query_pos_ths,
-                query_pos=query_pos,
+            query = self.query_fusion(
+                query_1=query,
+                query_pos_1=query_pos,
+                query_2=query_ths,
+                query_pos_2=query_pos_ths,
             )
             out["inst_outputs"] = {
                 "pred_logits": pred_cls_inst[-1],
@@ -453,3 +453,23 @@ class TransformerLayer(nn.Module):
         queries = self.ffn_layer(queries)
 
         return queries
+
+
+class QueryFusionModule(nn.Module):
+    def __init__(self, d_model, nhead=8, dropout=0.0):
+        super().__init__()
+        self.d_model = d_model
+        self.attn = blocks.CrossAttentionLayer(d_model=self.d_model, nhead=nhead, dropout=dropout)
+        self.mlp1 = blocks.MLP(self.d_model, self.d_model, self.d_model, 3)
+        self.mlp2 = blocks.MLP(self.d_model, self.d_model, self.d_model, 3)
+
+    def forward(self, query_1, query_pos_1, query_2, query_pos_2):
+        query_fused = self.attn(
+            q_embed=query_1,
+            bb_feat=query_2,
+            pos=query_pos_2,
+            query_pos=query_pos_1,
+        )
+        query_1 = self.mlp1(query_1)
+        query_fused = self.mlp2(query_fused + query_1)
+        return query_fused

@@ -290,9 +290,6 @@ class MaskSemanticDataset(Dataset):
                 np.array([]),
                 torch.tensor([]),
                 torch.tensor([]),
-                torch.tensor([]),
-                torch.tensor([]),
-                {},
                 {},
                 fname,
                 calib,
@@ -338,7 +335,7 @@ class MaskSemanticDataset(Dataset):
         #     "things_masks is empty," \
         #     f"file path: {fname}"
 
-        if dec_lab["things_masks"].shape[0] == 0:
+        if dec_lab["things_off"].shape[0] == 0:
             return None
 
         return (
@@ -424,9 +421,9 @@ class MaskSemanticDataset(Dataset):
             min_x, min_y, min_z = np.min(offset, axis=0)
             offset = offset / np.array([max_x - min_x, max_y - min_y, max_z - min_z])
             things_off[i, mask.astype(bool)] = offset
-        things_cls = torch.from_numpy(things_cls)
+        # things_cls = torch.from_numpy(things_cls)
         things_off = torch.from_numpy(things_off)
-        things_masks = torch.from_numpy(things_masks)
+        # things_masks = torch.from_numpy(things_masks)
 
         outputs = {
             "masks": masks,

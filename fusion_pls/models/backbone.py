@@ -46,8 +46,8 @@ class FusionEncoder(nn.Module):
                 # )
             )
 
-        sem_head_in_dim = self.out_dim[-1]
-        self.sem_head = nn.Linear(sem_head_in_dim, data_cfg.NUM_CLASSES)
+        # sem_head_in_dim = self.out_dim[-1]
+        # self.sem_head = nn.Linear(sem_head_in_dim, data_cfg.NUM_CLASSES)
         # self.sem_head_img = nn.Linear(cfg.PCD.CHANNELS[-1], data_cfg.NUM_CLASSES)
         # self.sem_head_pcd = nn.Linear(cfg.PCD.CHANNELS[-1], data_cfg.NUM_CLASSES)
 
@@ -83,13 +83,8 @@ class FusionEncoder(nn.Module):
         # pad batch
         fused_feats, batched_coors, pad_masks = self.pad_batch(coors, fused_feats)
 
-        # pcd_feats, _ = self.pcd_enc.voxel_to_point(in_field, pcd_out_feats)
-        # img_feats, _ = self.img_enc.voxel_to_point(in_field, img_out_feats)
-        # pcd_feats, _, _ = self.pad_batch(coors, pcd_feats)
-        # img_feats, _, _ = self.pad_batch(coors, img_feats)
-        # bb_logits_pcd = self.sem_head_pcd(pcd_feats[-1])
-        # bb_logits_img = self.sem_head_img(img_feats[-1])
-        bb_logits = self.sem_head(fused_feats[-1])
+        # bb_logits = self.sem_head(fused_feats[-1])
+        bb_logits = torch.tensor([]).cuda()
 
         return fused_feats, batched_coors, pad_masks, bb_logits
 

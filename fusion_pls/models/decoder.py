@@ -96,7 +96,7 @@ class PanopticMaskDecoder(nn.Module):
             pred_cls_inst, pred_mask_inst, pred_off_inst, query_ths = self.inst_decoder(
                 query_ths, query_pos_ths, src, pos, mask_feats, last_pad, pad_masks
             )
-            query = self.query_fusion(
+            query = query + self.query_fusion(
                 q_embed=query,
                 bb_feat=query_ths,
                 pos=query_pos_ths,
@@ -167,8 +167,8 @@ class MaskSegmentor(nn.Module):
         self.num_queries = cfg.NUM_QUERIES
         self.dropout = cfg.DROPOUT
         self.num_classes = cfg.NUM_CLASSES
-        if mode == 'instance':
-            self.num_classes_things = cfg.NUM_THING_CLASSES
+        # if mode == 'instance':
+        #     self.num_classes_things = cfg.NUM_THING_CLASSES
 
         # decoder layers
         self.decoder = nn.ModuleList()
@@ -214,7 +214,8 @@ class MaskSegmentor(nn.Module):
         elif mode == 'instance':
             self.cls_pred = nn.Linear(
                 self.d_model,
-                self.num_classes_things + 1,
+                # self.num_classes_things + 1,
+                self.num_classes + 1,
             )
             self.mask_embed = blocks.MLP(
                 self.d_model,
@@ -332,44 +333,13 @@ class MaskSegmentor(nn.Module):
         elif self.mode == 'semantic':
             for i in range(self.num_layers):
                 level_index = i % self.num_feat_levels
-
-                # outputs_class, outputs_mask, attn_mask = self.mask_pred_heads(
-                #     query,
-                #     mask_feats,
-                #     pad_mask=last_pad,
-                # )
                 outputs_sem = self.sem_pred_heads(src[level_index])
-                # if attn_mask is not None:
-                #     attn_mask[torch.where(attn_mask.sum(-1) == attn_mask.shape[-1])] = False
-
-                # query = self.decoder[i](
-                #     query,
-                #     src[level_index],
-                #     attn_mask=attn_mask,
-                #     pad_mask=pad_masks[level_index],
-                #     pos=pos[level_index],
-                #     query_pos=query_pos,
-                # )
-
-                # pred_cls.append(outputs_class)
-                # pred_mask.append(outputs_mask)
                 pred_sem.append(outputs_sem)
-
-            # outputs_class, outputs_mask, attn_mask = self.mask_pred_heads(
-            #     query,
-            #     mask_feats,
-            #     pad_mask=last_pad,
-            # )
             outputs_sem = self.sem_pred_heads(mask_feats)
-
-            # pred_cls.append(outputs_class)
-            # pred_mask.append(outputs_mask)
             pred_sem.append(outputs_sem)
 
-            # assert len(pred_cls) == self.num_layers + 1
-
-            # return pred_cls, pred_mask, pred_sem, query
             return pred_sem
+
         else:
             raise NotImplementedError
 

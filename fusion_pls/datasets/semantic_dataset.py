@@ -433,8 +433,8 @@ class MaskSemanticDataset(Dataset):
             "masks_cls": masks_cls,
             "masks_ids": masks_ids,
             "things_off": things_off,
-            "things_cls": things_cls,
-            "things_masks": things_masks,
+            # "things_cls": things_cls,
+            # "things_masks": things_masks,
             "things_masks_ids": things_masks_ids,
         }
 

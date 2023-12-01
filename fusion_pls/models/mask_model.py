@@ -28,7 +28,7 @@ class FusionLPS(LightningModule):
         )
 
         self.mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
-        self.inst_mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET], only_inst=True)
+        # self.inst_mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET], only_inst=True)
         self.off_loss = OffLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
         self.sem_loss = SemLoss(hparams.LOSS)
 
@@ -54,10 +54,11 @@ class FusionLPS(LightningModule):
         masks = [b["masks"] for b in dec_labels]
         masks_cls = [b["masks_cls"] for b in dec_labels]
         masks_ids = [b["masks_ids"] for b in dec_labels]
-        things_cls = [b["things_cls"] for b in dec_labels]
+        # things_cls = [b["things_cls"] for b in dec_labels]
         things_off = [b["things_off"] for b in dec_labels]
-        things_masks = [b["things_masks"] for b in dec_labels]
+        # things_masks = [b["things_masks"] for b in dec_labels]
         things_masks_ids = [b["things_masks_ids"] for b in dec_labels]
+        mask_targets = {"classes": masks_cls, "masks": masks}
 
         # calculate semantic decoder loss
         if self.enable_sem_dec:
@@ -71,16 +72,15 @@ class FusionLPS(LightningModule):
         # calculate instance decoder loss
         if self.enable_inst_dec:
             inst_off_targets = {"offsets": things_off}
-            inst_mask_targets = {"classes": things_cls, "masks": things_masks}
+            # inst_mask_targets = {"classes": things_cls, "masks": things_masks}
             loss_inst = self.off_loss(outputs["inst_outputs"], inst_off_targets, things_masks_ids)
-            loss_inst.update(self.inst_mask_loss(outputs["inst_outputs"], inst_mask_targets, things_masks_ids))
+            loss_inst.update(self.mask_loss(outputs["inst_outputs"], mask_targets, masks_ids))
             loss_inst = {
                 f"inst_{k}": v for k, v in loss_inst.items()
             }
             losses.update(loss_inst)
 
         # calculate panoptic decoder loss
-        mask_targets = {"classes": masks_cls, "masks": masks}
         loss_pan = self.mask_loss(outputs["pan_outputs"], mask_targets, masks_ids)
         loss_pan = {
             f"pan_{k}": v for k, v in loss_pan.items()
@@ -94,19 +94,6 @@ class FusionLPS(LightningModule):
         #     f"bbs_{k}": v for k, v in loss_sem_bb.items()
         # }
         # losses.update(loss_sem_bb)
-
-        # bb_logits_pcd = bb_logits[0][~padding]
-        # bb_logits_img = bb_logits[1][~padding]
-        # loss_sem_bb_pcd = self.sem_loss(bb_logits_pcd, sem_labels)
-        # loss_sem_bb_img = self.sem_loss(bb_logits_img, sem_labels)
-        # loss_sem_bb_pcd = {
-        #     f"bbsp_{k}": v for k, v in loss_sem_bb_pcd.items()
-        # }
-        # losses.update(loss_sem_bb_pcd)
-        # loss_sem_bb_img = {
-        #     f"bbsi_{k}": v for k, v in loss_sem_bb_img.items()
-        # }
-        # losses.update(loss_sem_bb_img)
 
         return losses
 

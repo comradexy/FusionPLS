@@ -7,14 +7,18 @@ BACKBONE:
     PRETRAINED: ckpt/mink_panoptic.ckpt
     FREEZE: True
   IMG:
-    MODEL: resnet34
-    PRETRAINED: True
-    PATCH_SIZE: 16
-    HIDDEN_DIM: 64
-    INTERP_MODE: bilinear
-    IMG_SIZE: [ 384, 1248 ] # [ H, W ]
-    FREEZE: True
-    DROPOUT: 0.1
+    RESOLUTION: 0.1
+    INPUT_DIM: 3
+    FREEZE: False
+#    MODEL: resnet34
+#    PRETRAINED: True
+#    PATCH_SIZE: 16
+#    HIDDEN_DIM: 64
+#    INTERP_MODE: bilinear
+#    IMG_SIZE: [ 384, 1248 ] # [ H, W ]
+#    FREEZE: True
+#    DROPOUT: 0.1
   FUSION:
     N_LEVELS: 4
     N_HEADS: 1
+    ENABLE_CA: True

@@ -25,8 +25,9 @@ class FusionEncoder(nn.Module):
         # self.img_enc = ResNetEncoderDecoder(cfg.IMG)
         # project img feats to pcd, then use mink encoder
         img_enc_cfg = cfg.PCD
-        img_enc_cfg.INPUT_DIM = 3
-        img_enc_cfg.FREEZE = False
+        img_enc_cfg.RESOLUTION = cfg.IMG.RESOLUTION
+        img_enc_cfg.INPUT_DIM = cfg.IMG.INPUT_DIM
+        img_enc_cfg.FREEZE = cfg.IMG.FREEZE
         self.img_enc = MinkEncoderDecoder(img_enc_cfg)
 
         # init fusion encoder
@@ -39,6 +40,7 @@ class FusionEncoder(nn.Module):
                     c_in_m1=cfg.PCD.CHANNELS[level - self.n_levels],
                     c_in_m2=cfg.PCD.CHANNELS[level - self.n_levels],
                     c_out=self.out_dim[level],
+                    enable_ca=cfg.FUSION.ENABLE_CA,
                 )
                 # MixDimensionAttentionFusion(
                 #     c_in=cfg.PCD.CHANNELS[level - self.n_levels],
@@ -54,39 +56,41 @@ class FusionEncoder(nn.Module):
     def forward(self, x):
         # get pcd feats
         pcd_feats = [torch.from_numpy(f).float().cuda() for f in x["feats"]]
-        in_field, pcd_out_feats = self.pcd_enc(pcd_feats, x["pt_coord"])
-        pcd_vox_feats = [vf.decomposed_features for vf in pcd_out_feats]
-        # pcd_feats, coors = self.pcd_enc.voxel_to_point(in_field, pcd_out_feats)
-        # pcd_feats, coors, pad_masks = self.pad_batch(coors, pcd_feats)
+        # in_field, pcd_out_feats = self.pcd_enc(pcd_feats, x["pt_coord"])
+        # pcd_vox_feats = [vf.decomposed_features for vf in pcd_out_feats]
+        pcd_feats, coors = self.pcd_enc(pcd_feats, x["pt_coord"])
+        pcd_feats, coors, pad_masks = self.pad_batch(coors, pcd_feats)
 
         # get img feats by mink
         image = [torch.from_numpy(i).float().cuda() for i in x["image"]]
         img_feats = self.proj_img2pcd(x['map_img2pcd'], image)
-        _, img_out_feats = self.img_enc(img_feats, x["pt_coord"])
-        img_vox_feats = [vf.decomposed_features for vf in img_out_feats]
-        # img_feats, _ = self.img_enc.voxel_to_point(in_field, img_out_feats)
-        # img_feats, _, _ = self.pad_batch(coors, img_feats)
+        # _, img_out_feats = self.img_enc(img_feats, x["pt_coord"])
+        # img_vox_feats = [vf.decomposed_features for vf in img_out_feats]
+        img_feats, _ = self.img_enc(img_feats, x["pt_coord"])
+        img_feats, _, _ = self.pad_batch(coors, img_feats)
 
         # multi-modal feature fusion
         fused_feats = []
         for l in range(self.n_levels):
             fused_feats.append(
                 self.fusion[l](
-                    pcd_vox_feats[l],
-                    img_vox_feats[l],
+                    # pcd_vox_feats[l],
+                    # img_vox_feats[l],
+                    pcd_feats[l],
+                    img_feats[l],
                 )
             )
 
-        # project vox to pts ,and batch norm
-        fused_feats, coors = self.pcd_enc.voxel_to_point(in_field, pcd_out_feats, fused_feats)
+        # # project vox to pts ,and batch norm
+        # fused_feats, coors = self.pcd_enc.voxel_to_point(in_field, pcd_out_feats, fused_feats)
 
-        # pad batch
-        fused_feats, batched_coors, pad_masks = self.pad_batch(coors, fused_feats)
+        # # pad batch
+        # fused_feats, batched_coors, pad_masks = self.pad_batch(coors, fused_feats)
 
         # bb_logits = self.sem_head(fused_feats[-1])
         bb_logits = torch.tensor([]).cuda()
 
-        return fused_feats, batched_coors, pad_masks, bb_logits
+        return fused_feats, coors, pad_masks, bb_logits
 
     def pad_batch(self, coors, feats):
         """
@@ -144,19 +148,42 @@ class FusionEncoder(nn.Module):
 
 
 class AutoWeightedFeatureFusion(nn.Module):
-    def __init__(self, c_in_m1, c_in_m2, c_out):
+    def __init__(self, c_in_m1, c_in_m2, c_out, enable_ca=False):
         super().__init__()
-        self.feats_proj_m1 = nn.Linear(c_in_m1, c_out)
-        self.feats_proj_m2 = nn.Linear(c_in_m2, c_out)
-        self.fusion_leaner = blocks.MLP(
-            input_dim=c_out * 2,
-            hidden_dim=c_out * 2,
-            output_dim=c_out,
-            num_layers=3,
-        )
-        self.weight_leaner = nn.Sequential(
-            blocks.MLP(c_out, c_out, 1, 3),
+        if c_in_m1 != c_in_m2:
+            self.proj_enabled = True
+            c_in = max(c_in_m1, c_in_m2)
+            self.proj_m1 = nn.Linear(c_in_m1, c_in)
+            self.proj_m2 = nn.Linear(c_in_m2, c_in)
+        else:
+            self.proj_enabled = False
+            c_in = c_in_m1
+
+        self.spatial_weight_leaner = nn.Sequential(
+            blocks.MLP(
+                input_dim=c_in * 2,
+                hidden_dim=c_in * 2,
+                output_dim=c_out,
+                num_layers=3,
+            ),
+            nn.LayerNorm(c_out),
+            nn.Linear(c_out, 2),
             nn.Sigmoid(),
+        )
+
+        self.enable_ca = enable_ca
+        if self.enable_ca:
+            self.channel_attn_m1 = ChannelAttention(c_in)
+            self.channel_attn_m2 = ChannelAttention(c_in)
+
+        self.fusion_leaner = nn.Sequential(
+            blocks.MLP(
+                input_dim=c_in * 2,
+                hidden_dim=c_in * 2,
+                output_dim=c_out,
+                num_layers=3,
+            ),
+            nn.LayerNorm(c_out),
         )
 
     def forward(
@@ -166,23 +193,27 @@ class AutoWeightedFeatureFusion(nn.Module):
     ):
         """
         Args:
-            feats_m1: list of [N, C_in_m1] torch.Tensor
-            feats_m2: list of [N, C_in_m2] torch.Tensor
+            feats_m1: [B, N, C_in_m1] torch.Tensor
+            feats_m2: [B, N, C_in_m2] torch.Tensor
         Returns:
-            fused_feats: list of [N, C_out] torch.Tensor
+            fused_feats: [B, N, C_out] torch.Tensor
         """
-        fused_feats = []
-        for f_m1, f_m2 in zip(feats_m1, feats_m2):
-            # project to same dim
-            f_m1 = self.feats_proj_m1(f_m1)
-            f_m2 = self.feats_proj_m2(f_m2)
-            # MLP
-            feats = self.fusion_leaner(torch.cat([f_m1, f_m2], dim=1))
-            # sigmoid
-            weights = self.weight_leaner(feats)
-            # weighted sum
-            feats = weights * feats + f_m1
-            fused_feats.append(feats)
+        if self.proj_enabled:
+            feats_m1 = self.proj_m1(feats_m1)
+            feats_m2 = self.proj_m2(feats_m2)
+
+        weights = self.spatial_weight_leaner(torch.cat([feats_m1, feats_m2], dim=2))
+
+        if self.enable_ca:
+            feats_m1 = feats_m1 * self.channel_attn_m1(feats_m1 + feats_m2)
+            feats_m2 = feats_m2 * self.channel_attn_m2(feats_m1 + feats_m2)
+
+        weighted_feats_m1 = weights[..., 0].unsqueeze(-1) * feats_m1
+        weighted_feats_m2 = weights[..., 1].unsqueeze(-1) * feats_m2
+
+        fused_feats = self.fusion_leaner(
+            torch.cat([weighted_feats_m1, weighted_feats_m2], dim=2)
+        )
 
         return fused_feats
 

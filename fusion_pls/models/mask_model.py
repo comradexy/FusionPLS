@@ -9,6 +9,11 @@ from fusion_pls.datasets.semantic_dataset import get_things_ids
 from fusion_pls.utils.evaluate_panoptic import PanopticEvaluator
 from pytorch_lightning.core.lightning import LightningModule
 
+# torch.manual_seed(12113593018903771778)
+# torch.cuda.manual_seed(4340416745473187)
+torch.manual_seed(11583082334441872749)
+torch.cuda.manual_seed(4906710517726616)
+
 
 class FusionLPS(LightningModule):
     def __init__(self, hparams):

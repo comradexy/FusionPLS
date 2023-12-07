@@ -16,8 +16,8 @@ class PanopticMaskDecoder(nn.Module):
         # query embeddings
         self.query_feat = nn.Embedding(self.num_queries, self.d_model)
         self.query_embed = nn.Embedding(self.num_queries, self.d_model)
-        self.query_feat_ths = nn.Embedding(self.num_queries, self.d_model)
-        self.query_embed_ths = nn.Embedding(self.num_queries, self.d_model)
+        # self.query_feat_ths = nn.Embedding(self.num_queries, self.d_model)
+        # self.query_embed_ths = nn.Embedding(self.num_queries, self.d_model)
 
         self.cfg_pan = edict(cfg.PANOPTIC)
         self.cfg_pan.NUM_CLASSES = data_cfg.NUM_CLASSES
@@ -43,15 +43,14 @@ class PanopticMaskDecoder(nn.Module):
                 "NUM_QUERIES in cfg.SEMANTIC must be equal to NUM_QUERIES in cfg.PANOPTIC."
 
         # decoder blocks
-        self.pan_decoder = MaskSegmentor(self.cfg_pan, mode='panoptic')
-        self.sem_decoder = MaskSegmentor(self.cfg_sem, mode='semantic')
+        self.sem_decoder = SemanticSegmentor(in_channels, self.cfg_sem)
         self.inst_decoder = MaskSegmentor(self.cfg_inst, mode='instance')
-        self.query_fusion = QueryFusionModule(d_model=self.d_model, nhead=8)
+        self.pan_decoder = MaskSegmentor(self.cfg_pan, mode='panoptic')
+        # self.query_fusion = QueryFusionModule(d_model=self.d_model, nhead=8)
         # position embedding
         self.pe_layer = PositionEncoding3D(self.cfg_pe)
 
         self.mask_feat_proj = nn.Sequential()
-
         assert isinstance(in_channels, list), "in_channels must be a list"
         if in_channels[-1] != self.d_model:
             self.mask_feat_proj = nn.Linear(in_channels[-1], self.d_model)
@@ -66,42 +65,48 @@ class PanopticMaskDecoder(nn.Module):
 
     def forward(self, feats, coords, pad_masks):
         last_coords = coords.copy().pop()
-        mask_feats = self.mask_feat_proj(feats.copy().pop()) + self.pe_layer(last_coords)
         last_pad = pad_masks.copy().pop()
-        src = []
-        pos = []
-
-        for i in range(self.num_feat_levels):
-            pos.append(self.pe_layer(coords[i]))
-            feat = self.input_proj[i](feats[i])
-            src.append(feat)
-
-        bs = src[0].shape[0]
-        query = self.query_feat.weight.unsqueeze(0).repeat(bs, 1, 1)
-        query_pos = self.query_embed.weight.unsqueeze(0).repeat(bs, 1, 1)
-        query_ths = self.query_feat_ths.weight.unsqueeze(0).repeat(bs, 1, 1)
-        query_pos_ths = self.query_embed_ths.weight.unsqueeze(0).repeat(bs, 1, 1)
-
         out = {}
+
         if self.cfg_sem.ENABLE:
-            pred_sem = self.sem_decoder(
-                query, query_pos, src, pos, mask_feats, last_pad, pad_masks
-            )
+            mask_feats, src, pred_sem = self.sem_decoder(feats)
+
+            # position embedding
+            mask_feats = mask_feats + self.pe_layer(last_coords)
+            pos = []
+            for i in range(self.num_feat_levels):
+                pos.append(self.pe_layer(coords[i]))
+
             out["sem_outputs"] = {
                 "pred_sem": pred_sem[-1],
                 "aux_outputs": self.set_aux_sem(pred_sem)
             }
+        else:
+            mask_feats = self.mask_feat_proj(feats.copy().pop()) + self.pe_layer(last_coords)
+            src = []
+            pos = []
+
+            for i in range(self.num_feat_levels):
+                pos.append(self.pe_layer(coords[i]))
+                feat = self.input_proj[i](feats[i])
+                src.append(feat)
+
+        bs = src[0].shape[0]
+        query = self.query_feat.weight.unsqueeze(0).repeat(bs, 1, 1)
+        query_pos = self.query_embed.weight.unsqueeze(0).repeat(bs, 1, 1)
+        # query_ths = self.query_feat_ths.weight.unsqueeze(0).repeat(bs, 1, 1)
+        # query_pos_ths = self.query_embed_ths.weight.unsqueeze(0).repeat(bs, 1, 1)
 
         if self.cfg_inst.ENABLE:
-            pred_cls_inst, pred_mask_inst, pred_off_inst, query_ths = self.inst_decoder(
-                query_ths, query_pos_ths, src, pos, mask_feats, last_pad, pad_masks
+            pred_cls_inst, pred_mask_inst, pred_off_inst, query = self.inst_decoder(
+                query, query_pos, src, pos, mask_feats, last_pad, pad_masks
             )
-            query = self.query_fusion(
-                query_1=query,
-                query_pos_1=query_pos,
-                query_2=query_ths,
-                query_pos_2=query_pos_ths,
-            )
+            # query = self.query_fusion(
+            #     query_1=query,
+            #     query_pos_1=query_pos,
+            #     query_2=query_ths,
+            #     query_pos_2=query_pos_ths,
+            # )
             out["inst_outputs"] = {
                 "pred_logits": pred_cls_inst[-1],
                 "pred_masks": pred_mask_inst[-1],
@@ -197,16 +202,6 @@ class MaskSegmentor(nn.Module):
                 3,
             )
         elif mode == 'semantic':
-            # self.cls_pred = nn.Linear(
-            #     self.d_model,
-            #     self.num_classes + 1,
-            # )
-            # self.mask_embed = blocks.MLP(
-            #     self.d_model,
-            #     self.d_model,
-            #     self.d_model,
-            #     3,
-            # )
             self.sem_pred = nn.Linear(
                 self.d_model,
                 self.num_classes,
@@ -402,6 +397,62 @@ class MaskSegmentor(nn.Module):
         return outputs_sem
 
 
+class SemanticSegmentor(nn.Module):
+    def __init__(self, in_channels, cfg):
+        super().__init__()
+        self.d_model = cfg.D_MODEL
+        self.num_feat_levels = cfg.FEATURE_LEVELS
+        self.num_classes = cfg.NUM_CLASSES
+
+        assert isinstance(in_channels, list), \
+            "in_channels must be a list"
+
+        self.mask_feat_proj = nn.Sequential()
+        self._mask_feat_proj = nn.Sequential()
+        self.mask_feat_proj = nn.Linear(in_channels[-1], self.d_model)
+        self._mask_feat_proj = nn.Linear(in_channels[-1], self.d_model)
+
+        in_channels = in_channels[:-1][-self.num_feat_levels:]
+        self.input_proj = nn.ModuleList()
+        self._input_proj = nn.ModuleList()
+        for ch in in_channels:
+            self.input_proj.append(nn.Linear(ch, self.d_model))
+            self._input_proj.append(nn.Linear(ch, self.d_model))
+
+        self.sem_pred = nn.Linear(
+            self.d_model,
+            self.num_classes,
+        )
+        self.layer_norm = nn.LayerNorm(self.d_model)
+
+    def forward(self, feats):
+        assert isinstance(feats, list), "feats must be a list"
+        assert len(feats) == self.num_feat_levels + 1, \
+            f"feats must have {self.num_feat_levels + 1} levels, got {len(feats)}"
+
+        mask_feats = feats.copy().pop()
+        mask_feats_p = self.mask_feat_proj(mask_feats)
+        mask_feats_s = self._mask_feat_proj(mask_feats)
+        src_p = []
+        src_s = []
+        for i in range(self.num_feat_levels):
+            src_p.append(self.input_proj[i](feats[i]))
+            src_s.append(self._input_proj[i](feats[i]))
+
+        outputs_sem = []
+        for i in range(self.num_feat_levels):
+            outputs_sem.append(self.sem_pred(src_s[i]))
+        outputs_sem.append(self.sem_pred(mask_feats_s))
+
+        mask_feats = self.layer_norm(mask_feats_p + mask_feats_s)
+        src = [
+            self.layer_norm(src_p[i] + src_s[i])
+            for i in range(self.num_feat_levels)
+        ]
+
+        return mask_feats, src, outputs_sem
+
+
 class TransformerLayer(nn.Module):
     def __init__(self, d_model, d_ffn, num_heads, dropout):
         super().__init__()
@@ -460,16 +511,16 @@ class QueryFusionModule(nn.Module):
         super().__init__()
         self.d_model = d_model
         self.attn = blocks.CrossAttentionLayer(d_model=self.d_model, nhead=nhead, dropout=dropout)
-        self.mlp1 = blocks.MLP(self.d_model, self.d_model, self.d_model, 3)
-        self.mlp2 = blocks.MLP(self.d_model, self.d_model, self.d_model, 3)
+        self.ffn = blocks.FFNLayer(d_model=self.d_model, dim_feedforward=4 * self.d_model, dropout=dropout)
 
     def forward(self, query_1, query_pos_1, query_2, query_pos_2):
-        query_fused = self.attn(
-            q_embed=query_1,
-            bb_feat=query_2,
-            pos=query_pos_2,
-            query_pos=query_pos_1,
+        query_fused = self.ffn(
+            self.attn(
+                q_embed=query_1,
+                bb_feat=query_2,
+                pos=query_pos_2,
+                query_pos=query_pos_1,
+            )
         )
-        query_1 = self.mlp1(query_1)
-        query_fused = self.mlp2(query_fused + query_1)
+        query_fused = query_fused + query_1
         return query_fused

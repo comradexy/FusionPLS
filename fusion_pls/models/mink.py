@@ -141,14 +141,14 @@ class MinkEncoderDecoder(nn.Module):
         out_feats = [y1, y2, y3, y4]
 
         # # vox2feat and apply batchnorm
-        # feats, coords = self.voxel_to_point(in_field, out_feats)
+        feats, coords = self.voxel_to_point(in_field, out_feats)
+
+        return feats, coords
+
+        # vox_feats = [vf.decomposed_features for vf in out_feats]
+        # vox_coords = [vf.decomposed_coordinates for vf in out_feats]
         #
-        # return feats, coords
-
-        vox_feats = [vf.decomposed_features for vf in out_feats]
-        vox_coords = [vf.decomposed_coordinates for vf in out_feats]
-
-        return in_field, out_feats
+        # return in_field, out_feats
 
     def voxel_to_point(self, in_field, out_feats, vox_feats=None):
         coords = [in_field.decomposed_coordinates for _ in range(len(out_feats))]

@@ -19,6 +19,7 @@ BACKBONE:
 #    FREEZE: True
 #    DROPOUT: 0.1
   FUSION:
+    ENABLE: True
     N_LEVELS: 4
     N_HEADS: 1
     ENABLE_CA: True

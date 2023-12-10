@@ -33,6 +33,7 @@ class FusionEncoder(nn.Module):
         # init fusion encoder
         self.n_levels = cfg.FUSION.N_LEVELS
         self.out_dim = cfg.PCD.CHANNELS[-self.n_levels:]
+        self.enable_fusion = cfg.FUSION.ENABLE
         self.fusion = nn.ModuleList()
         for level in range(self.n_levels):
             self.fusion.append(
@@ -61,36 +62,42 @@ class FusionEncoder(nn.Module):
         pcd_feats, coors = self.pcd_enc(pcd_feats, x["pt_coord"])
         pcd_feats, coors, pad_masks = self.pad_batch(coors, pcd_feats)
 
-        # get img feats by mink
-        image = [torch.from_numpy(i).float().cuda() for i in x["image"]]
-        img_feats = self.proj_img2pcd(x['map_img2pcd'], image)
-        # _, img_out_feats = self.img_enc(img_feats, x["pt_coord"])
-        # img_vox_feats = [vf.decomposed_features for vf in img_out_feats]
-        img_feats, _ = self.img_enc(img_feats, x["pt_coord"])
-        img_feats, _, _ = self.pad_batch(coors, img_feats)
+        if self.enable_fusion:
+            # get img feats by mink
+            image = [torch.from_numpy(i).float().cuda() for i in x["image"]]
+            img_feats = self.proj_img2pcd(x['map_img2pcd'], image)
+            # _, img_out_feats = self.img_enc(img_feats, x["pt_coord"])
+            # img_vox_feats = [vf.decomposed_features for vf in img_out_feats]
+            img_feats, _ = self.img_enc(img_feats, x["pt_coord"])
+            img_feats, _, _ = self.pad_batch(coors, img_feats)
 
-        # multi-modal feature fusion
-        fused_feats = []
-        for l in range(self.n_levels):
-            fused_feats.append(
-                self.fusion[l](
-                    # pcd_vox_feats[l],
-                    # img_vox_feats[l],
-                    pcd_feats[l],
-                    img_feats[l],
+            # multi-modal feature fusion
+            fused_feats = []
+            for l in range(self.n_levels):
+                fused_feats.append(
+                    self.fusion[l](
+                        # pcd_vox_feats[l],
+                        # img_vox_feats[l],
+                        pcd_feats[l],
+                        img_feats[l],
+                    )
                 )
-            )
 
-        # # project vox to pts ,and batch norm
-        # fused_feats, coors = self.pcd_enc.voxel_to_point(in_field, pcd_out_feats, fused_feats)
+            # # project vox to pts ,and batch norm
+            # fused_feats, coors = self.pcd_enc.voxel_to_point(in_field, pcd_out_feats, fused_feats)
 
-        # # pad batch
-        # fused_feats, batched_coors, pad_masks = self.pad_batch(coors, fused_feats)
+            # # pad batch
+            # fused_feats, batched_coors, pad_masks = self.pad_batch(coors, fused_feats)
 
-        # bb_logits = self.sem_head(fused_feats[-1])
-        bb_logits = torch.tensor([]).cuda()
+            # bb_logits = self.sem_head(fused_feats[-1])
+            bb_logits = torch.tensor([]).cuda()
 
-        return fused_feats, coors, pad_masks, bb_logits
+            return fused_feats, coors, pad_masks, bb_logits
+
+        else:
+            bb_logits = torch.tensor([]).cuda()
+
+            return pcd_feats, coors, pad_masks, bb_logits
 
     def pad_batch(self, coors, feats):
         """

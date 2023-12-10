@@ -183,9 +183,9 @@ class SemanticDataset(Dataset):
             self.im_idx[index].replace("velodyne", "image_2")[:-3] + "png"
         )
         image = np.array(image, dtype=np.float32, copy=False) / 255.
-        img_mean = np.asarray(self.img_mean, dtype=np.float32)
-        img_std = np.asarray(self.img_mean, dtype=np.float32)
-        image = (image - img_mean) / img_std  # [H, W, C]
+        # img_mean = np.asarray(self.img_mean, dtype=np.float32)
+        # img_std = np.asarray(self.img_mean, dtype=np.float32)
+        # image = (image - img_mean) / img_std  # [H, W, C]
         image = np.transpose(image, (2, 0, 1))  # [H, W, C] -> [C, H, W]
 
         if len(intensity.shape) == 2:

@@ -201,11 +201,6 @@ class MaskSegmentor(nn.Module):
                 self.d_model,
                 3,
             )
-        elif mode == 'semantic':
-            self.sem_pred = nn.Linear(
-                self.d_model,
-                self.num_classes,
-            )
         elif mode == 'instance':
             self.cls_pred = nn.Linear(
                 self.d_model,
@@ -325,16 +320,6 @@ class MaskSegmentor(nn.Module):
 
             return pred_cls, pred_mask, pred_off, query
 
-        elif self.mode == 'semantic':
-            for i in range(self.num_layers):
-                level_index = i % self.num_feat_levels
-                outputs_sem = self.sem_pred_heads(src[level_index])
-                pred_sem.append(outputs_sem)
-            outputs_sem = self.sem_pred_heads(mask_feats)
-            pred_sem.append(outputs_sem)
-
-            return pred_sem
-
         else:
             raise NotImplementedError
 
@@ -388,13 +373,6 @@ class MaskSegmentor(nn.Module):
         outputs_off_z = torch.einsum("bqc,bpc->bpq", off_z_embed, mask_feats)
 
         return outputs_class, outputs_mask, attn_mask, [outputs_off_x, outputs_off_y, outputs_off_z]
-
-    def sem_pred_heads(
-            self,
-            mask_feats,
-    ):
-        outputs_sem = self.sem_pred(mask_feats)
-        return outputs_sem
 
 
 class SemanticSegmentor(nn.Module):
@@ -455,12 +433,13 @@ class SemanticSegmentor(nn.Module):
         # outputs_sem.append(self.sem_pred(mask_feats_s))
 
         # mask_feats = self.layer_norm(mask_feats_p + mask_feats_s)
-        mask_feats = self.layer_norm(mask_feats)
-        src = [
-            # self.layer_norm(src_p[i] + src_s[i])
-            self.layer_norm(src[i])
-            for i in range(self.num_feat_levels)
-        ]
+
+        # mask_feats = self.layer_norm(mask_feats)
+        # src = [
+        #     # self.layer_norm(src_p[i] + src_s[i])
+        #     self.layer_norm(src[i])
+        #     for i in range(self.num_feat_levels)
+        # ]
 
         return mask_feats, src, outputs_sem
 

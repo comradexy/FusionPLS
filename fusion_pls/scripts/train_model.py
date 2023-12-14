@@ -7,6 +7,7 @@ from os.path import join
 import click
 import torch
 import yaml
+import numpy as np
 from easydict import EasyDict as edict
 from fusion_pls.datasets.semantic_dataset import SemanticDatasetModule
 from fusion_pls.models.mask_model import FusionLPS
@@ -113,12 +114,16 @@ def save_seeds(save_dir):
         torch_cuda_seed = torch.cuda.initial_seed()
     else:
         torch_cuda_seed = "N/A"
+
+    np_state = np.random.get_state()
+
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     file_path = os.path.join(save_dir, "seeds.txt")
     with open(file_path, "w") as f:
         f.write(f"torch seed: {torch_seed}\n"
-                f"torch cuda seed: {torch_cuda_seed}")
+                f"torch cuda seed: {torch_cuda_seed}\n"
+                f"numpy state: {np_state}")
 
 
 def get_dir(obj):

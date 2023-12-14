@@ -34,31 +34,21 @@ class FusionEncoder(nn.Module):
         self.n_levels = cfg.FUSION.N_LEVELS
         self.out_dim = cfg.PCD.CHANNELS[-self.n_levels:]
         self.enable_fusion = cfg.FUSION.ENABLE
-        self.fusion = nn.ModuleList()
-        for level in range(self.n_levels):
-            self.fusion.append(
-                AutoWeightedFeatureFusion(
-                    c_in_m1=cfg.PCD.CHANNELS[level - self.n_levels],
-                    c_in_m2=cfg.PCD.CHANNELS[level - self.n_levels],
-                    c_out=self.out_dim[level],
-                    enable_ca=cfg.FUSION.ENABLE_CA,
+        if self.enable_fusion:
+            self.fusion = nn.ModuleList()
+            for level in range(self.n_levels):
+                self.fusion.append(
+                    AutoWeightedFeatureFusion(
+                        c_in_m1=cfg.PCD.CHANNELS[level - self.n_levels],
+                        c_in_m2=cfg.PCD.CHANNELS[level - self.n_levels],
+                        c_out=self.out_dim[level],
+                        enable_ca=cfg.FUSION.ENABLE_CA,
+                    )
                 )
-                # MixDimensionAttentionFusion(
-                #     c_in=cfg.PCD.CHANNELS[level - self.n_levels],
-                #     n_heads=cfg.FUSION.N_HEADS,
-                # )
-            )
-
-        # sem_head_in_dim = self.out_dim[-1]
-        # self.sem_head = nn.Linear(sem_head_in_dim, data_cfg.NUM_CLASSES)
-        # self.sem_head_img = nn.Linear(cfg.PCD.CHANNELS[-1], data_cfg.NUM_CLASSES)
-        # self.sem_head_pcd = nn.Linear(cfg.PCD.CHANNELS[-1], data_cfg.NUM_CLASSES)
 
     def forward(self, x):
         # get pcd feats
         pcd_feats = [torch.from_numpy(f).float().cuda() for f in x["feats"]]
-        # in_field, pcd_out_feats = self.pcd_enc(pcd_feats, x["pt_coord"])
-        # pcd_vox_feats = [vf.decomposed_features for vf in pcd_out_feats]
         pcd_feats, coors = self.pcd_enc(pcd_feats, x["pt_coord"])
         pcd_feats, coors, pad_masks = self.pad_batch(coors, pcd_feats)
 
@@ -66,8 +56,6 @@ class FusionEncoder(nn.Module):
             # get img feats by mink
             image = [torch.from_numpy(i).float().cuda() for i in x["image"]]
             img_feats = self.proj_img2pcd(x['map_img2pcd'], image)
-            # _, img_out_feats = self.img_enc(img_feats, x["pt_coord"])
-            # img_vox_feats = [vf.decomposed_features for vf in img_out_feats]
             img_feats, _ = self.img_enc(img_feats, x["pt_coord"])
             img_feats, _, _ = self.pad_batch(coors, img_feats)
 
@@ -76,28 +64,15 @@ class FusionEncoder(nn.Module):
             for l in range(self.n_levels):
                 fused_feats.append(
                     self.fusion[l](
-                        # pcd_vox_feats[l],
-                        # img_vox_feats[l],
                         pcd_feats[l],
                         img_feats[l],
                     )
                 )
 
-            # # project vox to pts ,and batch norm
-            # fused_feats, coors = self.pcd_enc.voxel_to_point(in_field, pcd_out_feats, fused_feats)
-
-            # # pad batch
-            # fused_feats, batched_coors, pad_masks = self.pad_batch(coors, fused_feats)
-
-            # bb_logits = self.sem_head(fused_feats[-1])
-            bb_logits = torch.tensor([]).cuda()
-
-            return fused_feats, coors, pad_masks, bb_logits
+            return fused_feats, coors, pad_masks
 
         else:
-            bb_logits = torch.tensor([]).cuda()
-
-            return pcd_feats, coors, pad_masks, bb_logits
+            return pcd_feats, coors, pad_masks
 
     def pad_batch(self, coors, feats):
         """

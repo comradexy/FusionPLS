@@ -9,11 +9,6 @@ from fusion_pls.datasets.semantic_dataset import get_things_ids
 from fusion_pls.utils.evaluate_panoptic import PanopticEvaluator
 from pytorch_lightning.core.lightning import LightningModule
 
-# torch.manual_seed(12113593018903771778)
-# torch.cuda.manual_seed(4340416745473187)
-torch.manual_seed(11583082334441872749)
-torch.cuda.manual_seed(4906710517726616)
-
 
 class FusionLPS(LightningModule):
     def __init__(self, hparams):
@@ -42,11 +37,11 @@ class FusionLPS(LightningModule):
         )
 
     def forward(self, x):
-        feats, coords, pad_masks, bb_logits = self.backbone(x)
+        feats, coords, pad_masks = self.backbone(x)
         outputs, padding = self.decoder(feats, coords, pad_masks)
-        return outputs, padding, bb_logits
+        return outputs, padding
 
-    def get_loss(self, x, outputs, padding, bb_logits):
+    def get_loss(self, x, outputs, padding):
         losses = {}
 
         dec_labels = x["dec_lab"]
@@ -92,19 +87,11 @@ class FusionLPS(LightningModule):
         }
         losses.update(loss_pan)
 
-        # calculate backbone semantic loss
-        # bb_logits = bb_logits[~padding]
-        # loss_sem_bb = self.sem_loss(bb_logits, sem_labels)
-        # loss_sem_bb = {
-        #     f"bbs_{k}": v for k, v in loss_sem_bb.items()
-        # }
-        # losses.update(loss_sem_bb)
-
         return losses
 
     def training_step(self, x: dict, idx):
-        outputs, padding, bb_logits = self.forward(x)
-        loss_dict = self.get_loss(x, outputs, padding, bb_logits)
+        outputs, padding = self.forward(x)
+        loss_dict = self.get_loss(x, outputs, padding)
         for k, v in loss_dict.items():
             self.log(f"train/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
         total_loss = sum(loss_dict.values())
@@ -118,8 +105,8 @@ class FusionLPS(LightningModule):
             self.evaluation_step(x, idx)
             return
 
-        outputs, padding, bb_logits = self.forward(x)
-        loss_dict = self.get_loss(x, outputs, padding, bb_logits)
+        outputs, padding = self.forward(x)
+        loss_dict = self.get_loss(x, outputs, padding)
         for k, v in loss_dict.items():
             self.log(f"val/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
         total_loss = sum(loss_dict.values())
@@ -149,13 +136,13 @@ class FusionLPS(LightningModule):
             self.evaluator.reset()
 
     def evaluation_step(self, x: dict, idx):
-        outputs, padding, bb_logits = self.forward(x)
+        outputs, padding = self.forward(x)
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
 
         self.evaluator.update(sem_pred, ins_pred, x)
 
     def test_step(self, x: dict, idx):
-        outputs, padding, bb_logits = self.forward(x)
+        outputs, padding = self.forward(x)
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
 
         if "RESULTS_DIR" in self.cfg:
@@ -167,12 +154,12 @@ class FusionLPS(LightningModule):
         torch.cuda.empty_cache()
 
     def configure_optimizers(self):
-        # backbone_params = list(self.backbone.parameters())
-        # other_params = list(self.decoder.parameters()) + \
-        #                list(self.mask_loss.parameters()) + \
-        #                list(self.sem_loss.parameters())
+        # pcd_enc_params = list(self.backbone.pcd_enc.parameters())
+        # other_params = list(self.backbone.img_enc.parameters()) + \
+        #                list(self.backbone.fusion.parameters()) + \
+        #                list(self.decoder.parameters())
         # optimizer = torch.optim.AdamW([
-        #     {'params': backbone_params, 'lr': self.cfg.TRAIN.BACKBONE_LR},
+        #     {'params': pcd_enc_params, 'lr': 0.01 * self.cfg.TRAIN.LR},
         #     {'params': other_params, 'lr': self.cfg.TRAIN.LR}
         # ])
         optimizer = torch.optim.AdamW(

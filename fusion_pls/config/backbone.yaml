@@ -10,16 +10,8 @@ BACKBONE:
     RESOLUTION: 0.1
     INPUT_DIM: 3
     FREEZE: False
-#    MODEL: resnet34
-#    PRETRAINED: True
-#    PATCH_SIZE: 16
-#    HIDDEN_DIM: 64
-#    INTERP_MODE: bilinear
-#    IMG_SIZE: [ 384, 1248 ] # [ H, W ]
-#    FREEZE: True
-#    DROPOUT: 0.1
   FUSION:
     ENABLE: True
     N_LEVELS: 4
     N_HEADS: 1
-    ENABLE_CA: True
+    ENABLE_CA: False

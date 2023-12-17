@@ -403,7 +403,7 @@ class SemanticSegmentor(nn.Module):
         for ch in in_channels[-(self.num_feat_levels + 1):]:
             self.sem_pred.append(nn.Linear(ch, self.num_classes))
 
-        self.layer_norm = nn.LayerNorm(self.d_model)
+        # self.layer_norm = nn.LayerNorm(self.d_model)
 
     def forward(self, feats):
         assert isinstance(feats, list), "feats must be a list"

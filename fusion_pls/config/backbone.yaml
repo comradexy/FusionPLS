@@ -14,4 +14,4 @@ BACKBONE:
     ENABLE: True
     N_LEVELS: 4
     N_HEADS: 1
-    ENABLE_CA: False
+    ENABLE_CA: True

@@ -39,8 +39,7 @@ class FusionEncoder(nn.Module):
             for level in range(self.n_levels):
                 self.fusion.append(
                     AutoWeightedFeatureFusion(
-                        c_in_m1=cfg.PCD.CHANNELS[level - self.n_levels],
-                        c_in_m2=cfg.PCD.CHANNELS[level - self.n_levels],
+                        c_in=cfg.PCD.CHANNELS[level - self.n_levels],
                         c_out=self.out_dim[level],
                         enable_ca=cfg.FUSION.ENABLE_CA,
                     )
@@ -130,43 +129,28 @@ class FusionEncoder(nn.Module):
 
 
 class AutoWeightedFeatureFusion(nn.Module):
-    def __init__(self, c_in_m1, c_in_m2, c_out, enable_ca=False):
+    def __init__(self, c_in, c_out, enable_ca=False):
         super().__init__()
-        if c_in_m1 != c_in_m2:
-            self.proj_enabled = True
-            c_in = max(c_in_m1, c_in_m2)
-            self.proj_m1 = nn.Linear(c_in_m1, c_in)
-            self.proj_m2 = nn.Linear(c_in_m2, c_in)
-        else:
-            self.proj_enabled = False
-            c_in = c_in_m1
-
         self.spatial_weight_leaner = nn.Sequential(
-            blocks.MLP(
-                input_dim=c_in * 2,
-                hidden_dim=c_in * 2,
-                output_dim=c_out,
-                num_layers=3,
-            ),
-            nn.LayerNorm(c_out),
-            nn.Linear(c_out, 2),
+            blocks.MLP(c_in * 2, c_in * 2, c_in, 3),
+            blocks.MLP(c_in, c_in, 2, 3),
             nn.Sigmoid(),
         )
 
         self.enable_ca = enable_ca
         if self.enable_ca:
-            self.channel_attn_m1 = ChannelAttention(c_in)
-            self.channel_attn_m2 = ChannelAttention(c_in)
+            self.channel_attn_m1 = nn.Sequential(
+                blocks.MLP(c_in * 2, c_in * 2, c_in, 3),
+                ChannelAttention(c_in),
+            )
+            self.channel_attn_m2 = nn.Sequential(
+                blocks.MLP(c_in * 2, c_in * 2, c_in, 3),
+                ChannelAttention(c_in),
+            )
 
-        self.fusion_leaner = nn.Sequential(
-            blocks.MLP(
-                input_dim=c_in * 2,
-                hidden_dim=c_in * 2,
-                output_dim=c_out,
-                num_layers=3,
-            ),
-            nn.LayerNorm(c_out),
-        )
+        self.fusion_leaner = blocks.MLP(c_in * 2, c_in * 2, c_in, 3)
+
+        self.output_proj = nn.Linear(c_in, c_out)
 
     def forward(
             self,
@@ -175,110 +159,48 @@ class AutoWeightedFeatureFusion(nn.Module):
     ):
         """
         Args:
-            feats_m1: [B, N, C_in_m1] torch.Tensor
-            feats_m2: [B, N, C_in_m2] torch.Tensor
+            feats_m1: [B, N, C_in] torch.Tensor
+            feats_m2: [B, N, C_in] torch.Tensor
         Returns:
-            fused_feats: [B, N, C_out] torch.Tensor
+            output: [B, N, C_out] torch.Tensor
         """
-        if self.proj_enabled:
-            feats_m1 = self.proj_m1(feats_m1)
-            feats_m2 = self.proj_m2(feats_m2)
+        assert feats_m1.shape[-1] == feats_m2.shape[-1]
 
-        weights = self.spatial_weight_leaner(torch.cat([feats_m1, feats_m2], dim=2))
+        spatial_weights = self.spatial_weight_leaner(
+            torch.cat([feats_m1, feats_m2], dim=2)
+        )
+        weights_m1 = spatial_weights[..., 0].unsqueeze(-1)
+        weights_m2 = spatial_weights[..., 1].unsqueeze(-1)
 
         if self.enable_ca:
-            feats_m1 = feats_m1 * self.channel_attn_m1(feats_m1 + feats_m2)
-            feats_m2 = feats_m2 * self.channel_attn_m2(feats_m1 + feats_m2)
-
-        weighted_feats_m1 = weights[..., 0].unsqueeze(-1) * feats_m1
-        weighted_feats_m2 = weights[..., 1].unsqueeze(-1) * feats_m2
-
-        fused_feats = self.fusion_leaner(
-            torch.cat([weighted_feats_m1, weighted_feats_m2], dim=2)
-        )
-
-        return fused_feats
-
-
-class MixDimensionAttentionFusion(nn.Module):
-    def __init__(self, c_in, n_heads=1):
-        super().__init__()
-        self.channel_attn_m1 = ChannelAttention(c_in)
-        self.channel_attn_m2 = ChannelAttention(c_in)
-        self.ca_fusion = nn.MultiheadAttention(c_in, n_heads, batch_first=True)
-
-        self.spatial_attn_m1 = SpatialAttention()
-        self.spatial_attn_m2 = SpatialAttention()
-        self.sa_fusion = nn.Sequential(
-            nn.Linear(2, 1),
-            nn.Sigmoid(),
-        )
-
-        self.feat_fusion = nn.Sequential(
-            nn.Linear(c_in * 2, c_in),
-            nn.ReLU(True),
-            nn.Linear(c_in, c_in),
-        )
-
-    def forward(self, feats_m1, feats_m2):
-        """
-        Args:
-            feats_m1: list of [N, C] torch.Tensor
-            feats_m2: list of [N, C] torch.Tensor
-        Returns:
-            fused_feats: list of [N, C] torch.Tensor
-        """
-        assert len(feats_m1) == len(feats_m2), \
-            "Batch size of img_feats and pcd_feats must be the same"
-
-        fused_feats = []
-        for f_m1, f_m2 in zip(feats_m1, feats_m2):
-            # unsqueeze, out: [1, N, C]
-            f_m1 = f_m1.unsqueeze(0)
-            f_m2 = f_m2.unsqueeze(0)
-
-            # channel attention, out: [1, 1, C]
-            ca_f_m1 = self.channel_attn_m1(f_m1)
-            ca_f_m2 = self.channel_attn_m2(f_m2)
-
-            # spatial attention, out: [1, N, 1]
-            sa_f_m1 = self.spatial_attn_m1(f_m1)
-            sa_f_m2 = self.spatial_attn_m2(f_m2)
-
-            # fuse
-            ca_fused_m1 = self.ca_fusion(
-                query=ca_f_m1,
-                key=ca_f_m2,
-                value=ca_f_m2,
-            )[0]
-            ca_fused_m2 = self.ca_fusion(
-                query=ca_f_m2,
-                key=ca_f_m1,
-                value=ca_f_m1,
-            )[0]
-            f_m1 = ca_fused_m1 * f_m1
-            f_m2 = ca_fused_m2 * f_m2
-            fused_feat = self.feat_fusion(torch.cat([f_m1, f_m2], dim=2))
-
-            sa_fused = self.sa_fusion(
-                torch.cat([sa_f_m1, sa_f_m2], dim=2)
+            channel_weights_m1 = self.channel_attn_m1(
+                torch.cat([feats_m1, feats_m2], dim=2)
             )
-            fused_feat = sa_fused * fused_feat
+            channel_weights_m2 = self.channel_attn_m2(
+                torch.cat([feats_m1, feats_m2], dim=2)
+            )
+            weights_m1 = weights_m1 * channel_weights_m1
+            weights_m2 = weights_m2 * channel_weights_m2
 
-            fused_feats.append(fused_feat.squeeze(0))
+        fused_feats = self.fusion_leaner(torch.cat(
+            [feats_m1 * weights_m1, feats_m2 * weights_m2],
+            dim=2)
+        )
 
-        return fused_feats
+        output = self.output_proj(fused_feats + feats_m1)
+
+        return output
 
 
 class ChannelAttention(nn.Module):
-    def __init__(self, in_channels, output_size=1, ratio=8):
+    def __init__(self, in_channels, output_size=1):
         super(ChannelAttention, self).__init__()
         self.avg_pool = nn.AdaptiveAvgPool1d(output_size)
         self.max_pool = nn.AdaptiveMaxPool1d(output_size)
 
-        self.fc1 = nn.Conv1d(in_channels, in_channels // ratio, 1, bias=False)
+        self.fc1 = nn.Conv1d(in_channels, in_channels * 2, 1, bias=False)
         self.relu = nn.ReLU()
-        self.fc2 = nn.Conv1d(in_channels // ratio, in_channels, 1, bias=False)
+        self.fc2 = nn.Conv1d(in_channels * 2, in_channels, 1, bias=False)
 
         self.sigmoid = nn.Sigmoid()
 

@@ -9,9 +9,10 @@ BACKBONE:
   IMG:
     RESOLUTION: 0.1
     INPUT_DIM: 3
-    FREEZE: False
+    FREEZE: True
   FUSION:
     ENABLE: True
     N_LEVELS: 4
     N_HEADS: 1
     ENABLE_CA: True
+    PRETRAINED: ckpt/fp3seg_fusion_backbone.ckpt

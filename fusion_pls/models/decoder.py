@@ -386,24 +386,14 @@ class SemanticSegmentor(nn.Module):
             "in_channels must be a list"
 
         self.mask_feat_proj = nn.Linear(in_channels[-1], self.d_model)
-        # self._mask_feat_proj = nn.Linear(in_channels[-1], self.d_model)
 
-        # in_channels = in_channels[:-1][-self.num_feat_levels:]
         self.input_proj = nn.ModuleList()
-        # self._input_proj = nn.ModuleList()
         for ch in in_channels[:-1][-self.num_feat_levels:]:
             self.input_proj.append(nn.Linear(ch, self.d_model))
-            # self._input_proj.append(nn.Linear(ch, self.d_model))
 
-        # self.sem_pred = nn.Linear(
-        #     self.d_model,
-        #     self.num_classes,
-        # )
         self.sem_pred = nn.ModuleList()
         for ch in in_channels[-(self.num_feat_levels + 1):]:
             self.sem_pred.append(nn.Linear(ch, self.num_classes))
-
-        # self.layer_norm = nn.LayerNorm(self.d_model)
 
     def forward(self, feats):
         assert isinstance(feats, list), "feats must be a list"
@@ -417,29 +407,9 @@ class SemanticSegmentor(nn.Module):
 
         mask_feats = feats.copy().pop()
         mask_feats = self.mask_feat_proj(mask_feats)
-        # mask_feats_p = self.mask_feat_proj(mask_feats)
-        # mask_feats_s = self._mask_feat_proj(mask_feats)
         src = []
-        # src_p = []
-        # src_s = []
         for i in range(self.num_feat_levels):
-            # src_p.append(self.input_proj[i](feats[i]))
-            # src_s.append(self._input_proj[i](feats[i]))
             src.append(self.input_proj[i](feats[i]))
-
-        # outputs_sem = []
-        # for i in range(self.num_feat_levels):
-        #     outputs_sem.append(self.sem_pred(src_s[i]))
-        # outputs_sem.append(self.sem_pred(mask_feats_s))
-
-        # mask_feats = self.layer_norm(mask_feats_p + mask_feats_s)
-
-        # mask_feats = self.layer_norm(mask_feats)
-        # src = [
-        #     # self.layer_norm(src_p[i] + src_s[i])
-        #     self.layer_norm(src[i])
-        #     for i in range(self.num_feat_levels)
-        # ]
 
         return mask_feats, src, outputs_sem
 

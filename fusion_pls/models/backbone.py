@@ -22,8 +22,6 @@ class FusionEncoder(nn.Module):
         self.pcd_enc = MinkEncoderDecoder(cfg.PCD)
 
         # init img encoder
-        # self.img_enc = ResNetEncoderDecoder(cfg.IMG)
-        # project img feats to pcd, then use mink encoder
         img_enc_cfg = cfg.PCD
         img_enc_cfg.RESOLUTION = cfg.IMG.RESOLUTION
         img_enc_cfg.INPUT_DIM = cfg.IMG.INPUT_DIM
@@ -45,17 +43,37 @@ class FusionEncoder(nn.Module):
                     )
                 )
 
+        self.init_weights(cfg.FUSION.PRETRAINED)
+
+    def init_weights(self, pretrained=None):
+        if pretrained is not None:
+            pretrained_dict = torch.load(pretrained)
+            model_dict = self.state_dict()
+            pretrained_dict = {
+                k: v
+                for k, v in pretrained_dict.items()
+            }
+            model_dict.update(pretrained_dict)
+            self.load_state_dict(model_dict)
+
     def forward(self, x):
         # get pcd feats
-        pcd_feats = [torch.from_numpy(f).float().cuda() for f in x["feats"]]
-        pcd_feats, coors = self.pcd_enc(pcd_feats, x["pt_coord"])
+        pcd_feats = [
+            torch.from_numpy(f[i]).float().cuda()
+            for f, i in zip(x["feats"], x["indices"])
+        ]
+        pcd_coors = [
+            c[i] for c, i in zip(x["pt_coord"], x["indices"])
+        ]
+
+        pcd_feats, coors = self.pcd_enc(pcd_feats, pcd_coors)
         pcd_feats, coors, pad_masks = self.pad_batch(coors, pcd_feats)
 
         if self.enable_fusion:
             # get img feats by mink
             image = [torch.from_numpy(i).float().cuda() for i in x["image"]]
             img_feats = self.proj_img2pcd(x['map_img2pcd'], image)
-            img_feats, _ = self.img_enc(img_feats, x["pt_coord"])
+            img_feats, _ = self.img_enc(img_feats, pcd_coors)
             img_feats, _, _ = self.pad_batch(coors, img_feats)
 
             # multi-modal feature fusion
@@ -126,6 +144,74 @@ class FusionEncoder(nn.Module):
             )
 
         return img2pcd_feats
+
+
+class PcdEncoder(nn.Module):
+    def __init__(self, cfg: object, data_cfg: object):
+        super().__init__()
+        self.pcd_enc = MinkEncoderDecoder(cfg.PCD)
+        self.n_levels = cfg.FUSION.N_LEVELS
+        self.out_dim = cfg.PCD.CHANNELS[-self.n_levels:]
+
+    def forward(self, x, return_icf=False):
+        # get pcd feats
+        pcd_feats = [
+            torch.from_numpy(f).float().cuda() for f in x["feats"]
+        ]
+        pcd_coors = x["pt_coord"]
+        pcd_feats, coors = self.pcd_enc(pcd_feats, pcd_coors)
+
+        if return_icf:
+            indices = [torch.from_numpy(ind).bool().cuda() for ind in x["indices"]]
+            pcd_feats_icf = [
+                [f[i] for f, i in zip(pcd_feats[l], indices)]
+                for l in range(self.n_levels)
+            ]
+            coors_icf = [
+                [c[i] for c, i in zip(coors[l], indices)]
+                for l in range(self.n_levels)
+            ]
+            pcd_feats_icf, _, _ = self.pad_batch(coors_icf, pcd_feats_icf)
+        else:
+            pcd_feats_icf = None
+
+        pcd_feats, coors, pad_masks = self.pad_batch(coors, pcd_feats)
+
+        return pcd_feats, coors, pad_masks, pcd_feats_icf
+
+    def pad_batch(self, coors, feats):
+        """
+        From a list of multi-level features create a list of batched tensors with
+        features padded to the max number of points in the batch.
+
+        returns:
+            feats: List of batched feature Tensors per feature level
+            coors: List of batched coordinate Tensors per feature level
+            pad_masks: List of batched bool Tensors indicating padding
+        """
+        # get max number of points in the batch for each feature level
+        maxs = [max([level.shape[0] for level in batch]) for batch in feats]
+        # pad and batch each feature level in a single Tensor
+        coors = [
+            torch.stack([F.pad(f, (0, 0, 0, maxs[i] - f.shape[0])) for f in batch])
+            for i, batch in enumerate(coors)
+        ]
+        pad_masks = [
+            torch.stack(
+                [
+                    F.pad(
+                        torch.zeros_like(f[:, 0]), (0, maxs[i] - f.shape[0]), value=1
+                    ).bool()
+                    for f in batch
+                ]
+            )
+            for i, batch in enumerate(feats)
+        ]
+        feats = [
+            torch.stack([F.pad(f, (0, 0, 0, maxs[i] - f.shape[0])) for f in batch])
+            for i, batch in enumerate(feats)
+        ]
+        return feats, coors, pad_masks
 
 
 class AutoWeightedFeatureFusion(nn.Module):

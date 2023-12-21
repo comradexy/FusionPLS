@@ -6,7 +6,7 @@ TRAIN:
   DECAY: 0.1
   LR: 0.0001
   MAX_EPOCH: 80
-  BATCH_SIZE: 4
+  BATCH_SIZE: 1
   BATCH_ACC: 4
   NUM_WORKERS: 12
   N_GPUS: -1
@@ -17,16 +17,20 @@ TRAIN:
 MODEL:
   DATASET: KITTI
   OVERLAP_THRESHOLD: 0.8
+  ENABLE_KD: True
 
 LOSS:
+  KD:
+    TEMPERATURE: 1.0
+    WEIGHT: 0.0001
   OFFSET:
     WEIGHTS_KEYS: [ 'loss_off' ]
-    WEIGHTS: [ 1.0 ]
+    WEIGHTS: [ 5.0 ]
   MASK:
     WEIGHTS_KEYS: [ 'loss_ce','loss_dice','loss_mask' ]
     WEIGHTS: [ 2.0, 5.0, 5.0 ]
   SEM:
-    DEC_RATIO: 0.1
+    DEC_RATIO: 0.2
     WEIGHTS: [ 2.0, 6.0 ] #Ce, Lovasz
   EOS_COEF: 0.1
   NUM_POINTS: 50000
@@ -36,7 +40,7 @@ LOSS:
 KITTI:
   PATH: data/kitti
   CONFIG: datasets/semantic-kitti.yaml
-  IN_CAMERA_FOV: True
+  #  IN_CAMERA_FOV: True
   NUM_CLASSES: 20
   NUM_THING_CLASSES: 8
   IGNORE_LABEL: 0

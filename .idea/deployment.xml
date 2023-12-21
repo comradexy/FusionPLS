@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" serverName="dxy@10.12.41.198:22 password" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
+  <component name="PublishConfigData" serverName="dxy@fp3seg" remoteFilesAllowedToDisappearOnAutoupload="false" confirmBeforeUploading="false">
     <option name="confirmBeforeUploading" value="false" />
     <serverData>
       <paths name="dxy@10.12.41.198:22 password">
@@ -10,10 +10,10 @@
           </mappings>
         </serverdata>
       </paths>
-      <paths name="dxy@10.12.54.61:22 password">
+      <paths name="dxy@fp3seg">
         <serverdata>
           <mappings>
-            <mapping local="$PROJECT_DIR$" web="/" />
+            <mapping deploy="/data/dxy/Code/FP3Seg" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>

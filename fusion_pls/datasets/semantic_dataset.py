@@ -119,7 +119,6 @@ class SemanticDataset(Dataset):
         self.dataset = cfg.MODEL.DATASET
         data_path = cfg[self.dataset].PATH + "/sequences/"
         yaml_path = cfg[self.dataset].CONFIG
-        self.in_camera_fov = cfg[self.dataset].IN_CAMERA_FOV
         self.img_mean, self.img_std = cfg[self.dataset].IMG_NORM_PARAMS
 
         with open(yaml_path, "r") as stream:
@@ -230,7 +229,6 @@ class MaskSemanticDataset(Dataset):
             aug=False,
     ):
         self.dataset = dataset
-        self.in_camera_fov = dataset.in_camera_fov
         self.sub_pts = sub_pts
         self.split = split
         self.min_points = min_pts
@@ -319,31 +317,15 @@ class MaskSemanticDataset(Dataset):
             xyz, sem_labels, ins_labels
         )
 
-        if self.in_camera_fov:
-            # get feats and coords in camera fov
-            feats = feats[indices]
-            xyz = xyz[indices]
-            # get sem_labels and ins_labels in camera fov
-            sem_labels = sem_labels[indices]
-            ins_labels = ins_labels[indices]
-            # get decoder labels in camera fov
-            dec_lab = self.get_decoder_labels(
-                xyz, sem_labels, ins_labels
-            )
-
-        # assert dec_lab["things_masks"].shape[0] != 0, \
-        #     "things_masks is empty," \
-        #     f"file path: {fname}"
-
         if dec_lab["things_off"].shape[0] == 0:
             return None
 
         return (
             xyz,
             feats,
-            image,  # normalized image
-            map_img2pcd,  # mapping from image to pcd, shape=[N, 2]
             indices,  # indices of points in image
+            image,
+            map_img2pcd,  # mapping from image to pcd, shape=[N, 2]
             sem_labels,
             ins_labels,
             dec_lab,
@@ -443,9 +425,9 @@ class BatchCollation:
         self.keys = [
             "pt_coord",
             "feats",
+            "indices",
             "image",
             "map_img2pcd",
-            "indices",
             "sem_label",
             "ins_label",
             "dec_lab",

@@ -1,10 +1,11 @@
 import fusion_pls.utils.testing as testing
 import MinkowskiEngine as ME
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from fusion_pls.models.decoder import PanopticMaskDecoder
-from fusion_pls.models.loss import MaskLoss, OffLoss, SemLoss
-from fusion_pls.models.backbone import FusionEncoder
+from fusion_pls.models.loss import MaskLoss, OffLoss, SemLoss, DistillLoss
+from fusion_pls.models.backbone import FusionEncoder, PcdEncoder
 from fusion_pls.datasets.semantic_dataset import get_things_ids
 from fusion_pls.utils.evaluate_panoptic import PanopticEvaluator
 from pytorch_lightning.core.lightning import LightningModule
@@ -16,32 +17,44 @@ class FusionLPS(LightningModule):
         self.save_hyperparameters(dict(hparams))
         self.cfg = hparams
 
-        backbone = FusionEncoder(hparams.BACKBONE, hparams[hparams.MODEL.DATASET])
-        self.backbone = ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(backbone)
+        self.backbone = nn.ModuleDict()
+
+        self.enable_kd = hparams.MODEL.ENABLE_KD
+        # use pcd encoder as student
+        hparams.BACKBONE.PCD.FREEZE = not self.enable_kd
+        backbone_s = PcdEncoder(hparams.BACKBONE, hparams[hparams.MODEL.DATASET])
+        self.backbone.update({"student": backbone_s})
+        if self.enable_kd:
+            # use fusion encoder as teacher
+            hparams.BACKBONE.PCD.FREEZE = self.enable_kd
+            backbone_t = FusionEncoder(hparams.BACKBONE, hparams[hparams.MODEL.DATASET])
+            self.backbone.update({"teacher": backbone_t})
+
+        ME.MinkowskiSyncBatchNorm.convert_sync_batchnorm(self.backbone)
 
         self.enable_inst_dec = hparams.DECODER.INSTANCE.ENABLE
         self.enable_sem_dec = hparams.DECODER.SEMANTIC.ENABLE
         self.decoder = PanopticMaskDecoder(
-            self.backbone.out_dim,
+            self.backbone["student"].out_dim,
             hparams.DECODER,
             hparams[hparams.MODEL.DATASET],
         )
 
         self.mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
-        # self.inst_mask_loss = MaskLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET], only_inst=True)
         self.off_loss = OffLoss(hparams.LOSS, hparams[hparams.MODEL.DATASET])
         self.sem_loss = SemLoss(hparams.LOSS)
+        self.kd_loss = DistillLoss(hparams.LOSS)
 
         self.evaluator = PanopticEvaluator(
             hparams[hparams.MODEL.DATASET], hparams.MODEL.DATASET
         )
 
     def forward(self, x):
-        feats, coords, pad_masks = self.backbone(x)
+        feats, coords, pad_masks, feats_s = self.backbone["student"](x, self.enable_kd)
         outputs, padding = self.decoder(feats, coords, pad_masks)
-        return outputs, padding
+        return outputs, padding, feats_s
 
-    def get_loss(self, x, outputs, padding):
+    def get_loss(self, x, outputs, padding, feats_t=None, feats_s=None):
         losses = {}
 
         dec_labels = x["dec_lab"]
@@ -87,11 +100,22 @@ class FusionLPS(LightningModule):
         }
         losses.update(loss_pan)
 
+        # calculate KD loss
+        if feats_t is not None and feats_s is not None:
+            loss_kd = self.kd_loss(feats_t, feats_s)
+            losses.update(loss_kd)
+
         return losses
 
     def training_step(self, x: dict, idx):
-        outputs, padding = self.forward(x)
-        loss_dict = self.get_loss(x, outputs, padding)
+        outputs, padding, feats_s = self.forward(x)
+
+        if self.enable_kd:
+            feats_t, _, _ = self.backbone["teacher"](x)
+        else:
+            feats_t = None
+
+        loss_dict = self.get_loss(x, outputs, padding, feats_t, feats_s)
         for k, v in loss_dict.items():
             self.log(f"train/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
         total_loss = sum(loss_dict.values())
@@ -105,8 +129,14 @@ class FusionLPS(LightningModule):
             self.evaluation_step(x, idx)
             return
 
-        outputs, padding = self.forward(x)
-        loss_dict = self.get_loss(x, outputs, padding)
+        outputs, padding, feats_s = self.forward(x)
+
+        if self.enable_kd:
+            feats_t, _, _ = self.backbone["teacher"](x)
+        else:
+            feats_t = None
+
+        loss_dict = self.get_loss(x, outputs, padding, feats_t, feats_s)
         for k, v in loss_dict.items():
             self.log(f"val/{k}", v, batch_size=self.cfg.TRAIN.BATCH_SIZE)
         total_loss = sum(loss_dict.values())
@@ -136,13 +166,13 @@ class FusionLPS(LightningModule):
             self.evaluator.reset()
 
     def evaluation_step(self, x: dict, idx):
-        outputs, padding = self.forward(x)
+        outputs, padding, _ = self.forward(x)
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
 
         self.evaluator.update(sem_pred, ins_pred, x)
 
     def test_step(self, x: dict, idx):
-        outputs, padding = self.forward(x)
+        outputs, padding, _ = self.forward(x)
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
 
         if "RESULTS_DIR" in self.cfg:

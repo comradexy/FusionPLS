@@ -10,6 +10,28 @@ from torch import nn
 from torch.autograd import Variable
 
 
+class DistillLoss(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.temperature = cfg.KD.TEMPERATURE
+        self.weight = cfg.KD.WEIGHT
+
+    def forward(self, feats_t, feats_s):
+        num_scales = len(feats_t)
+        loss = {}
+        for i in range(num_scales):
+            kd_loss = F.kl_div(
+                F.log_softmax(feats_s[i] / self.temperature, dim=-1),
+                F.softmax((feats_t[i] / self.temperature).detach(), dim=-1),
+                reduction='batchmean',
+            )
+            loss.update(
+                {f"kd_{i}": kd_loss * self.weight / num_scales}
+            )
+
+        return loss
+
+
 class MaskLoss(nn.Module):
     """This class computes the loss for DETR.
     The process happens in two steps:

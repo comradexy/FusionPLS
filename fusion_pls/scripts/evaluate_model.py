@@ -32,10 +32,10 @@ def main(w, save_testset, nuscenes, data_path):
     cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
 
     cfg.EVALUATE = True
-    cfg.BACKBONE.PRETRAINED = None
-    cfg.BACKBONE.MINK.PRETRAINED = None
-    cfg.BACKBONE.CPE.PRETRAINED = None
-    cfg.TRAIN.BATCH_SIZE = 4
+    cfg.BACKBONE.PCD.PRETRAINED = None
+    cfg.BACKBONE.FUSION.PRETRAINED = None
+    cfg.MODEL.ENABLE_KD = False
+    cfg.TRAIN.BATCH_SIZE = 1
     if save_testset:
         results_dir = create_dirs(nuscenes)
         print(f"Saving test set predictions in directory {results_dir}")
@@ -52,7 +52,7 @@ def main(w, save_testset, nuscenes, data_path):
     data = SemanticDatasetModule(cfg)
     model = FusionLPS(cfg)
     w = torch.load(w, map_location="cpu")
-    model.load_state_dict(w["state_dict"])
+    model.load_state_dict(w["state_dict"], strict=False)
 
     trainer = Trainer(
         gpus=cfg.TRAIN.N_GPUS,
@@ -60,7 +60,7 @@ def main(w, save_testset, nuscenes, data_path):
         logger=False)
 
     if save_testset:
-        trainer.tddddsfsdfsdfsdfsfsdest(model, data)
+        trainer.test(model, data)
     else:
         trainer.validate(model, data)
     model.evaluator.print_results()

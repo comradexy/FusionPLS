@@ -247,18 +247,19 @@ class MaskSemanticDataset(Dataset):
         while empty:
             data = self.dataset[index]
             xyz, intensity, image, sem_labels, ins_labels, fname, calib, pose = data
-            keep = np.argwhere(
-                (self.xlim[0] < xyz[:, 0])
-                & (xyz[:, 0] < self.xlim[1])
-                & (self.ylim[0] < xyz[:, 1])
-                & (xyz[:, 1] < self.ylim[1])
-                & (self.zlim[0] < xyz[:, 2])
-                & (xyz[:, 2] < self.zlim[1])
-            )[:, 0]
-            xyz = xyz[keep]
-            intensity = intensity[keep]
-            sem_labels = sem_labels[keep]
-            ins_labels = ins_labels[keep]
+            if self.split != "test":
+                keep = np.argwhere(
+                    (self.xlim[0] < xyz[:, 0])
+                    & (xyz[:, 0] < self.xlim[1])
+                    & (self.ylim[0] < xyz[:, 1])
+                    & (xyz[:, 1] < self.ylim[1])
+                    & (self.zlim[0] < xyz[:, 2])
+                    & (xyz[:, 2] < self.zlim[1])
+                )[:, 0]
+                xyz = xyz[keep]
+                intensity = intensity[keep]
+                sem_labels = sem_labels[keep]
+                ins_labels = ins_labels[keep]
 
             # skip scans without instances in train set
             if self.split != "train":

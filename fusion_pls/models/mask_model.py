@@ -21,12 +21,14 @@ class FusionLPS(LightningModule):
 
         self.enable_kd = hparams.MODEL.ENABLE_KD
         # use pcd encoder as student
-        hparams.BACKBONE.PCD.FREEZE = not self.enable_kd
+        hparams.BACKBONE.PCD.FREEZE = (not self.enable_kd) and hparams.BACKBONE.PCD.FREEZE
+        print(f"pcd_bb freeze: {hparams.BACKBONE.PCD.FREEZE}.")
         backbone_s = PcdEncoder(hparams.BACKBONE, hparams[hparams.MODEL.DATASET])
         self.backbone.update({"student": backbone_s})
         if self.enable_kd:
             # use fusion encoder as teacher
-            hparams.BACKBONE.PCD.FREEZE = self.enable_kd
+            hparams.BACKBONE.PCD.FREEZE = self.enable_kd and hparams.BACKBONE.IMG.FREEZE
+            print(f"img_bb freeze: {hparams.BACKBONE.PCD.FREEZE}.")
             backbone_t = FusionEncoder(hparams.BACKBONE, hparams[hparams.MODEL.DATASET])
             self.backbone.update({"teacher": backbone_t})
 

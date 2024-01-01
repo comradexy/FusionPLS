@@ -52,7 +52,7 @@ def main(w, save_testset, nuscenes, data_path):
     data = SemanticDatasetModule(cfg)
     model = FusionLPS(cfg)
     w = torch.load(w, map_location="cpu")
-    model.load_state_dict(w["state_dict"], strict=False)
+    model.load_state_dict(w["state_dict"], strict=True)
 
     trainer = Trainer(
         gpus=cfg.TRAIN.N_GPUS,

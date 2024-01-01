@@ -36,6 +36,7 @@ class SemanticDatasetModule(LightningDataModule):
             sub_pts=self.cfg[self.cfg.MODEL.DATASET].SUB_NUM_POINTS,
             subsample=self.cfg.TRAIN.SUBSAMPLE,
             aug=self.cfg.TRAIN.AUG,
+            load_inst=self.cfg.DECODER.INSTANCE.ENABLE,
         )
 
         val_set = SemanticDataset(
@@ -47,6 +48,7 @@ class SemanticDatasetModule(LightningDataModule):
             split="valid",
             min_pts=self.cfg[self.cfg.MODEL.DATASET].MIN_POINTS,
             space=self.cfg[self.cfg.MODEL.DATASET].SPACE,
+            load_inst=self.cfg.DECODER.INSTANCE.ENABLE,
         )
 
         test_set = SemanticDataset(
@@ -58,6 +60,7 @@ class SemanticDatasetModule(LightningDataModule):
             split="test",
             min_pts=self.cfg[self.cfg.MODEL.DATASET].MIN_POINTS,
             space=self.cfg[self.cfg.MODEL.DATASET].SPACE,
+            load_inst=self.cfg.DECODER.INSTANCE.ENABLE,
         )
 
         self.things_ids = train_set.things_ids
@@ -227,6 +230,7 @@ class MaskSemanticDataset(Dataset):
             sub_pts=0,
             subsample=False,
             aug=False,
+            load_inst=False,
     ):
         self.dataset = dataset
         self.sub_pts = sub_pts
@@ -238,6 +242,7 @@ class MaskSemanticDataset(Dataset):
         self.xlim = space[0]
         self.ylim = space[1]
         self.zlim = space[2]
+        self.load_inst = load_inst
 
     def __len__(self):
         return len(self.dataset)
@@ -318,7 +323,7 @@ class MaskSemanticDataset(Dataset):
             xyz, sem_labels, ins_labels
         )
 
-        if dec_lab["things_off"].shape[0] == 0:
+        if self.load_inst and dec_lab["things_off"].shape[0] == 0:
             return None
 
         return (

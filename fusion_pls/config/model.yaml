@@ -2,11 +2,11 @@ EXPERIMENT:
   ID: fusion_lps
 
 TRAIN:
-  STEP: 50
+  STEP: 20
   DECAY: 0.1
   LR: 0.0001
-  MAX_EPOCH: 80
-  BATCH_SIZE: 1
+  MAX_EPOCH: 40
+  BATCH_SIZE: 2
   BATCH_ACC: 4
   NUM_WORKERS: 12
   N_GPUS: -1
@@ -17,25 +17,25 @@ TRAIN:
 MODEL:
   DATASET: KITTI
   OVERLAP_THRESHOLD: 0.8
-  ENABLE_KD: True
+  ENABLE_KD: False
 
 LOSS:
   KD:
-    TEMPERATURE: 1.0
-    WEIGHT: 0.0001
+    TEMPERATURE: 1.5
+    WEIGHT: 0.00002
   OFFSET:
     WEIGHTS_KEYS: [ 'loss_off' ]
-    WEIGHTS: [ 5.0 ]
+    WEIGHTS: [ 1.0 ]
   MASK:
     WEIGHTS_KEYS: [ 'loss_ce','loss_dice','loss_mask' ]
     WEIGHTS: [ 2.0, 5.0, 5.0 ]
   SEM:
-    DEC_RATIO: 0.2
+    DEC_RATIO: 0.01
     WEIGHTS: [ 2.0, 6.0 ] #Ce, Lovasz
   EOS_COEF: 0.1
-  NUM_POINTS: 50000
-  NUM_MASK_PTS: 500 # points to sample within each mask
-  P_RATIO: 0.4 # ratio of total points to use for the matching
+  NUM_POINTS: 80000
+  NUM_MASK_PTS: 800 # points to sample within each mask
+  P_RATIO: 0.5 # ratio of total points to use for the matching
 
 KITTI:
   PATH: data/kitti
@@ -47,7 +47,7 @@ KITTI:
   MIN_POINTS: 10 #smallest mask
   SPACE: # coord limits
     [ [ -48.0,48.0 ],[ -48.0,48.0 ],[ -4.0,1.5 ] ]
-  SUB_NUM_POINTS: 80000
+  SUB_NUM_POINTS: 100000
   IMG_NORM_PARAMS:
     - [ 0.485, 0.456, 0.406 ]
     - [ 0.229, 0.224, 0.225 ]

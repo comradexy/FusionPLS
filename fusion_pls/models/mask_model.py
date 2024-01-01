@@ -171,7 +171,15 @@ class FusionLPS(LightningModule):
         outputs, padding, _ = self.forward(x)
         sem_pred, ins_pred = self.panoptic_inference(outputs["pan_outputs"], padding)
 
+        if "RESULTS_DIR" in self.cfg:
+            results_dir = self.cfg.RESULTS_DIR
+            class_inv_lut = self.evaluator.get_class_inv_lut()
+            testing.save_results(
+                sem_pred, ins_pred, results_dir, x, class_inv_lut,
+            )
+
         self.evaluator.update(sem_pred, ins_pred, x)
+        torch.cuda.empty_cache()
 
     def test_step(self, x: dict, idx):
         outputs, padding, _ = self.forward(x)

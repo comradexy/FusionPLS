@@ -6,7 +6,7 @@ DECODER:
   PANOPTIC:
     NUM_HEADS: 8
     D_FFN: 1024
-    DEC_BLOCKS: 1
+    DEC_BLOCKS: 3
     DROPOUT: 0.0
 
   INSTANCE:
@@ -14,7 +14,7 @@ DECODER:
     DEC_BLOCKS: 1
 
   SEMANTIC:
-    ENABLE: False
+    ENABLE: True
     DEC_BLOCKS: 1
 
   POS_ENC:

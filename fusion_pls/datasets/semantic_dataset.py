@@ -19,6 +19,8 @@ class SemanticDatasetModule(LightningDataModule):
         self.train_mask_set = None
         self.val_mask_set = None
         self.test_mask_set = None
+        if "EVALUATE" not in self.cfg:
+            self.cfg.EVALUATE = False
 
     def prepare_data(self):
         pass
@@ -49,6 +51,7 @@ class SemanticDatasetModule(LightningDataModule):
             min_pts=self.cfg[self.cfg.MODEL.DATASET].MIN_POINTS,
             space=self.cfg[self.cfg.MODEL.DATASET].SPACE,
             load_inst=self.cfg.DECODER.INSTANCE.ENABLE,
+            evaluate=self.cfg.EVALUATE,
         )
 
         test_set = SemanticDataset(
@@ -231,6 +234,7 @@ class MaskSemanticDataset(Dataset):
             subsample=False,
             aug=False,
             load_inst=False,
+            evaluate=False,
     ):
         self.dataset = dataset
         self.sub_pts = sub_pts
@@ -243,6 +247,7 @@ class MaskSemanticDataset(Dataset):
         self.ylim = space[1]
         self.zlim = space[2]
         self.load_inst = load_inst
+        self.evaluate = evaluate
 
     def __len__(self):
         return len(self.dataset)
@@ -252,7 +257,7 @@ class MaskSemanticDataset(Dataset):
         while empty:
             data = self.dataset[index]
             xyz, intensity, image, sem_labels, ins_labels, fname, calib, pose = data
-            if self.split != "test":
+            if (self.split != "test") and (not self.evaluate):
                 keep = np.argwhere(
                     (self.xlim[0] < xyz[:, 0])
                     & (xyz[:, 0] < self.xlim[1])
@@ -299,6 +304,10 @@ class MaskSemanticDataset(Dataset):
                 calib,
                 pose,
             )
+
+        if self.evaluate:
+            self.aug = False
+            self.subsample = False
 
         # Subsample
         if self.split == "train" and self.subsample and len(xyz) > self.sub_pts:

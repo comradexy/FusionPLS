@@ -34,12 +34,8 @@ def main(name, split, weights, save, data_path, batch_size):
     cfg = edict({**model_cfg, **backbone_cfg, **decoder_cfg})
 
     cfg.EVALUATE = True
-    cfg.BACKBONE.PCD.PRETRAINED = None
-    cfg.BACKBONE.FUSION.PRETRAINED = None
     cfg.MODEL.ENABLE_KD = False
     cfg.TRAIN.BATCH_SIZE = batch_size
-    cfg.TRAIN.AUG = False
-    cfg.TRAIN.SUBSAMPLE = False
     if save:
         results_dir = create_dirs(name, split)
         print(f"Saving {split} set predictions in directory {results_dir}")

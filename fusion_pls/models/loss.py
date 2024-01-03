@@ -23,7 +23,6 @@ class DistillLoss(nn.Module):
             kd_loss = F.kl_div(
                 F.log_softmax(feats_s[i] / self.temperature, dim=-1),
                 F.softmax((feats_t[i] / self.temperature).detach(), dim=-1),
-                reduction='batchmean',
             )
             loss.update(
                 {f"kd_{i}": kd_loss * self.weight / num_scales}

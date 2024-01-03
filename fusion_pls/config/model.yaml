@@ -21,8 +21,8 @@ MODEL:
 
 LOSS:
   KD:
-    TEMPERATURE: 1.5
-    WEIGHT: 0.00002
+    TEMPERATURE: 5.0
+    WEIGHT: 0.5
   OFFSET:
     WEIGHTS_KEYS: [ 'loss_off' ]
     WEIGHTS: [ 1.0 ]

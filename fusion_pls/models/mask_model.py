@@ -179,7 +179,6 @@ class FusionLPS(LightningModule):
             )
 
         self.evaluator.update(sem_pred, ins_pred, x)
-        torch.cuda.empty_cache()
 
     def test_step(self, x: dict, idx):
         outputs, padding, _ = self.forward(x)
